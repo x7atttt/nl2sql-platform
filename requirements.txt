@@ -1,0 +1,15 @@
+Django==4.2.*
+djangorestframework==3.14.*
+django-filter==23.*
+psycopg2-binary==2.9.*
+celery==5.3.*
+redis==5.*
+django-celery-beat==2.5.*
+channels==4.*
+daphne==4.*
+pandas==2.2.*
+openpyxl==3.*
+langchain==0.1.*
+langchain-openai==0.0.*
+python-dotenv==1.*
+gunicorn==21.*
