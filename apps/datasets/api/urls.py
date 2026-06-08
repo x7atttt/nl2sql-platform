@@ -1,3 +1,11 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 
-urlpatterns = []
+from apps.datasets.api.views import DatasetViewSet
+
+router = DefaultRouter()
+router.register(r'', DatasetViewSet, basename='dataset')
+
+urlpatterns = [
+    path('', include(router.urls)),
+]
