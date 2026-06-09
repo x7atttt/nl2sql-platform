@@ -41,9 +41,13 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = df.columns.str.strip().str.lower().str.replace(' ', '_')
 
     for col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors='ignore')
+        try:
+            df[col] = pd.to_numeric(df[col])
+        except (ValueError, TypeError):
+            pass
 
     df = df.where(pd.notnull(df), None)
+    df = df.astype(object).where(pd.notnull(df), None)
     return df
 
 
