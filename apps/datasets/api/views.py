@@ -3,6 +3,7 @@ import hashlib
 from django.db import IntegrityError
 from rest_framework import viewsets, status
 from rest_framework.response import Response
+from rest_framework.decorators import action
 
 from apps.users.permissions import IsAnalyst, IsViewer
 from apps.datasets.models import Dataset
@@ -103,6 +104,23 @@ class DatasetViewSet(viewsets.ModelViewSet):
         dataset.file.delete(save=False)
         dataset.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['get'], url_path='analysis')
+    def analysis(self, request, pk=None):
+        """数据集分析统计"""
+        dataset = self.get_object()
+        if dataset.status != 'completed':
+            return Response(
+                {'error': '数据集尚未处理完成'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from apps.datasets.services.analyzer import (
+            get_dataset_overview, get_column_stats,
+        )
+        return Response({
+            'overview': get_dataset_overview(dataset),
+            'column_stats': get_column_stats(dataset),
+        })
 
 
 def _compute_md5(file) -> str:

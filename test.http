@@ -58,3 +58,6 @@ GET {{baseUrl}}/api/export/{{queryId}}/csv/
 
 ### 12. 导出查询结果为Excel（替换 queryId）
 GET {{baseUrl}}/api/export/{{queryId}}/xlsx/
+
+### 13. 数据集分析统计（替换 datasetId）
+GET {{baseUrl}}/api/datasets/{{datasetId}}/analysis/
