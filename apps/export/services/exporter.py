@@ -14,6 +14,8 @@ class ExportService:
     @staticmethod
     def execute_query(sql: str) -> list:
         """重新执行历史查询 SQL，返回结果列表"""
+        if 'LIMIT' not in sql.upper():
+            sql = sql.rstrip(';') + ' LIMIT 1000'
         with connection.cursor() as cursor:
             cursor.execute(sql)
             columns = [col[0] for col in cursor.description]
