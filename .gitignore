@@ -36,3 +36,4 @@ redis_data/
 test/
 .claude/settings.local.json
 项目二开发指导文档.md
+.env.production
