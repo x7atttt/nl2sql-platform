@@ -5,7 +5,7 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile --config.strict-minimum-release-age=false
+RUN pnpm install --frozen-lockfile --config.manage-package-manager-versions=false --config.minimumReleaseAge=0
 
 COPY . .
 RUN pnpm build
