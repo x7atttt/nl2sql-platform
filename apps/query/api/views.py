@@ -37,7 +37,7 @@ class NL2SQLQueryView(APIView):
         result = service.query(question)
 
         # 记录查询历史
-        QueryHistory.objects.create(
+        history = QueryHistory.objects.create(
             dataset=dataset,
             user=request.user,
             question=question,
@@ -47,6 +47,7 @@ class NL2SQLQueryView(APIView):
             execution_time_ms=result.get('execution_time_ms'),
         )
 
+        result['query_id'] = str(history.id)
         return Response(result)
 
 
