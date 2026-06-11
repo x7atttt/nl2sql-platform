@@ -3,10 +3,9 @@ services:
     build: .
     command: daphne -b 0.0.0.0 -p 8000 config.asgi:application
     volumes:
-      - .:/app
       - media_data:/app/media
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     env_file:
       - .env
     depends_on:
@@ -19,7 +18,7 @@ services:
     build: .
     command: celery -A config worker -l info --concurrency=2 --max-tasks-per-child=100
     volumes:
-      - .:/app
+      - media_data:/app/media
     env_file:
       - .env
     depends_on:
@@ -31,13 +30,22 @@ services:
   celery-beat:
     build: .
     command: celery -A config beat -l info
-    volumes:
-      - .:/app
     env_file:
       - .env
     depends_on:
       redis:
         condition: service_healthy
+
+  nginx:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - django
 
   db:
     image: postgres:15
@@ -45,10 +53,10 @@ services:
       POSTGRES_DB: ${DB_NAME:-data_platform}
       POSTGRES_USER: ${DB_USER:-data_platform_user}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    expose:
+      - "5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-data_platform_user}"]
       interval: 5s
@@ -57,8 +65,8 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
     volumes:
       - redis_data:/data
     healthcheck:
