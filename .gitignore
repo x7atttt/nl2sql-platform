@@ -14,6 +14,7 @@ media/
 
 # Environment
 .env
+.env.production
 
 # IDE
 .vscode/
@@ -23,6 +24,7 @@ media/
 # Node
 node_modules/
 frontend/dist/
+frontend/.vite/
 
 # OS
 .DS_Store
@@ -35,3 +37,4 @@ redis_data/
 test/
 .claude/settings.local.json
 项目二开发指导文档.md
+.env.production
