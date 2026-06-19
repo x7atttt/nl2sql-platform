@@ -6,7 +6,9 @@ COPY package.json ./
 RUN npm config set registry https://registry.npmmirror.com && npm install --legacy-peer-deps
 
 COPY . .
-RUN npm run build
+# 跳过 vue-tsc 类型检查（本地开发时已检查），直接 vite build
+# 2核服务器 vue-tsc 要 4-5 分钟且长时间无输出，vite build 只要 1-2 分钟
+RUN npx vite build
 
 FROM nginx:alpine
 
