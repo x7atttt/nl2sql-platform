@@ -55,6 +55,7 @@ def process_large_file(self, dataset_id: str):
         dataset.row_count = total_rows
         dataset.status = 'completed'
         dataset.save(update_fields=['row_count', 'status', 'updated_at'])
+        _send_progress(dataset_id, total_rows, status='completed')
 
     except Exception as exc:
         logger.error(f'处理数据集 {dataset_id} 失败: {exc}')
@@ -71,13 +72,27 @@ def process_large_file(self, dataset_id: str):
         else:
             dataset.status = 'failed'
             dataset.save(update_fields=['status', 'updated_at'])
+            _send_progress(dataset_id, 0, status='failed')
             logger.error(f'数据集 {dataset_id} 重试{self.max_retries}次后仍然失败，进入死信队列')
 
 
-def _send_progress(dataset_id: str, total_rows: int):
+def _send_progress(dataset_id: str, total_rows: int, status: str = 'processing'):
+    """通过 WebSocket 推送处理进度/终态到前端。
+
+    status 三种取值：
+    - 'processing'：处理中，每 chunk 推一次（progress=已处理行数）
+    - 'completed'：处理完成，任务结束时推一次（前端据此关闭连接）
+    - 'failed'：处理失败，重试耗尽时推一次
+    """
     try:
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
+
+        message = {
+            'processing': f'已处理 {total_rows} 行',
+            'completed': f'处理完成，共 {total_rows} 行',
+            'failed': '处理失败',
+        }.get(status, f'已处理 {total_rows} 行')
 
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
@@ -85,8 +100,8 @@ def _send_progress(dataset_id: str, total_rows: int):
             {
                 'type': 'progress_update',
                 'progress': total_rows,
-                'status': 'processing',
-                'message': f'已处理 {total_rows} 行',
+                'status': status,
+                'message': message,
             },
         )
     except Exception:

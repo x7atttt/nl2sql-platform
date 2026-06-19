@@ -22,11 +22,14 @@
         <el-table-column label="列数" width="90">
           <template #default="{ row }">{{ row.column_count || '-' }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="110">
+        <el-table-column label="状态" width="130">
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)" size="small">
               {{ statusLabel(row.status) }}
             </el-tag>
+            <div v-if="row.status === 'processing' && row._progressRows" class="progress-text">
+              {{ row._progressRows.toLocaleString() }} 行
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="大小" width="100">
@@ -94,7 +97,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Upload } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
-import { datasetApi } from '../api/dataset'
+import { datasetApi, createProgressSocket } from '../api/dataset'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const router = useRouter()
@@ -113,12 +116,14 @@ const showUploadDialog = ref(false)
 const uploading = ref(false)
 const uploadForm = ref({ name: '', file: null as File | null })
 const uploadRef = ref()
-const pollTimers = ref<ReturnType<typeof setInterval>[]>([])
+// 活跃的 WebSocket 连接：datasetId → WebSocket（组件卸载时统一关闭）
+const sockets = new Map<string, WebSocket>()
 
 onMounted(() => fetchList())
 
 onUnmounted(() => {
-  pollTimers.value.forEach(clearInterval)
+  sockets.forEach(s => s.readyState === WebSocket.OPEN && s.close())
+  sockets.clear()
 })
 
 async function fetchList() {
@@ -165,7 +170,7 @@ async function handleUpload() {
       ElMessage.success('上传并处理成功')
     } else {
       ElMessage.success('上传成功，正在处理中...')
-      pollStatus(res.data.id)
+      subscribeProgress(res.data.id)
     }
     fetchList()
   } finally {
@@ -173,23 +178,44 @@ async function handleUpload() {
   }
 }
 
-function pollStatus(id: string) {
-  const timer = setInterval(async () => {
-    try {
-      const res = await datasetApi.getDetail(id)
-      if (res.data.status === 'completed') {
-        ElMessage.success(`数据集 "${res.data.name}" 处理完成`)
-        clearInterval(timer)
+/**
+ * 订阅数据集处理进度（WebSocket）
+ * 收到 processing 时实时更新行状态，收到 completed/failed 时关闭连接
+ */
+function subscribeProgress(id: string) {
+  const socket = createProgressSocket(
+    id,
+    (data) => {
+      const row = datasets.value.find((d: any) => d.id === id)
+      if (!row) return
+
+      if (data.status === 'processing') {
+        row.status = 'processing'
+        row._progressRows = data.progress
+      } else if (data.status === 'completed') {
+        row.status = 'completed'
+        ElMessage.success(`数据集 "${row.name}" 处理完成`)
+        socket.close()
+        sockets.delete(id)
         fetchList()
-      } else if (res.data.status === 'failed') {
+      } else if (data.status === 'failed') {
+        row.status = 'failed'
         ElMessage.error('数据集处理失败')
-        clearInterval(timer)
+        socket.close()
+        sockets.delete(id)
       }
-    } catch {
-      clearInterval(timer)
-    }
-  }, 3000)
-  pollTimers.value.push(timer)
+    },
+    () => {
+      // WebSocket 异常（后端不可用等）：回退一次性 HTTP 查询兜底
+      sockets.delete(id)
+      datasetApi.getDetail(id).then((res) => {
+        if (res.data.status === 'completed' || res.data.status === 'failed') {
+          fetchList()
+        }
+      }).catch(() => { /* interceptor 处理 */ })
+    },
+  )
+  sockets.set(id, socket)
 }
 
 async function handleDelete(row: any) {
@@ -227,3 +253,12 @@ function formatTime(t: string) {
   return t.replace('T', ' ').slice(0, 19)
 }
 </script>
+
+<style scoped>
+.progress-text {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.2;
+}
+</style>
