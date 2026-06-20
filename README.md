@@ -10,13 +10,14 @@ Django + Celery + LangChain 构建的数据处理平台。用户上传 CSV/Excel
 
 ## Features
 
-- **数据集管理**：上传 CSV/Excel 文件，异步解析入库，支持状态轮询
+- **数据集管理**：上传 CSV/Excel 文件，异步解析入库，WebSocket 实时推送处理进度
 - **自然语言查询**：AI 自动将中文问题转为 SQL 并执行（NL2SQL）
 - **数据分析**：自动统计每列类型、空值、分布、高频值等
 - **数据导出**：查询结果导出为 CSV / Excel
 - **RBAC 权限**：admin / analyst / viewer 三角色，行级数据隔离
-- **幂等上传**：Redis 分布式锁 + 数据库唯一约束，防并发重复
+- **幂等上传**：Redis 分布式锁 + 数据库查重 + 数据库唯一约束，三道防线防重复
 - **Celery 任务可靠性**：指数退避重试 + 死信队列
+- **WebSocket 实时进度**：替代 HTTP 轮询，Celery 任务每处理 1 万行推送一次进度
 - **NL2SQL 安全**：三层 SQL 安全校验（白名单 → 关键字拦截 → 注入拦截）
 
 ## Tech Stack
@@ -61,21 +62,25 @@ u.save()
 
 ### Local Development
 
+> ⚠️ Backend **must** use `daphne` (not `runserver`), because `runserver` is WSGI and does not support WebSocket.
+
 ```bash
-# Backend
+# Backend (HTTP + WebSocket, must use daphne)
 pip install -r requirements.txt
 python manage.py migrate
-python manage.py runserver
+daphne -b 0.0.0.0 -p 8000 config.asgi:application
 
-# Celery
-celery -A config worker -l info --concurrency=2
+# Celery (Windows must use --pool=solo, prefork not supported)
+celery -A config worker -l info --pool=solo
 celery -A config beat -l info
 
 # Frontend
 cd frontend
-pnpm install
-pnpm dev    # http://localhost:5173
+npm install --legacy-peer-deps
+npm run dev    # http://localhost:5173
 ```
+
+> ⚠️ **All 3 terminals must be running**: daphne (HTTP + WS) + celery worker (async tasks) + vite dev (frontend). Missing any one will cause features to break.
 
 ## Architecture
 
@@ -138,6 +143,24 @@ pnpm dev    # http://localhost:5173
 | `/api/query/history/` | GET | Query history | Required |
 | `/api/export/{query_id}/csv/` | GET | Export CSV | Analyst+ |
 | `/api/export/{query_id}/xlsx/` | GET | Export Excel | Analyst+ |
+
+### WebSocket Endpoints
+
+| Endpoint | Description | Auth |
+|----------|-------------|------|
+| `/ws/datasets/{dataset_id}/progress/` | Real-time dataset processing progress push | Session (Cookie) |
+
+**Message format** (server → client, JSON):
+
+```json
+{
+  "progress": 30000,
+  "status": "processing",
+  "message": "已处理 30000 行"
+}
+```
+
+`status`: `processing` (in progress) | `completed` | `failed` (terminal states, client closes connection)
 
 ## RBAC
 
