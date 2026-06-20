@@ -57,7 +57,7 @@ class DataRow(models.Model):
     class Meta:
         db_table = 'dataset_rows'
         verbose_name = '数据行'
-        verbose_name_plural = verbose_name
+        verbose_name_plural = verbose_name  # 中文无复数，直接复用单数名
         indexes = [
             models.Index(
                 fields=['dataset', 'row_index'], name='idx_datarow_dataset_row'

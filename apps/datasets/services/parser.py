@@ -28,7 +28,7 @@ def parse_file_sync(dataset: Dataset) -> None:
         dataset.save(update_fields=['status', 'updated_at'])
         raise
 
-
+# 以下为工具函数
 def _read_file(path: str, file_name: str) -> pd.DataFrame:
     if file_name.endswith('.csv'):
         return pd.read_csv(path, index_col=False)
@@ -38,12 +38,14 @@ def _read_file(path: str, file_name: str) -> pd.DataFrame:
 
 
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """列名规范化、类型尽量数值化、非法/空值统一化。"""
     df.columns = df.columns.str.strip().str.lower().str.replace(' ', '_')
 
     for col in df.columns:
         try:
-            df[col] = pd.to_numeric(df[col])
+            df[col] = pd.to_numeric(df[col])  # 尝试把这一整列转成数字
         except (ValueError, TypeError):
+            # 无法转换为数值类型，跳过
             pass
 
     # astype(object) 确保数值列的 NaN/Inf 被替换为 Python None，兼容 JSONField
