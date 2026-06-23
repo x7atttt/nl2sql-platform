@@ -6,6 +6,50 @@ from apps.datasets.models import Dataset, DataRow
 
 ALLOWED_EXTENSIONS = ('.csv', '.xlsx', '.xls')
 
+# 数据集规模上限（匹配项目"中小数据集自助分析"定位）
+# 文件大小上限在 views.py 的 MAX_FILE_SIZE 单独定义
+MAX_ROWS_PER_DATASET = 100_000        # 10 万行
+MAX_COLUMNS_PER_DATASET = 100         # 100 列
+
+
+class DatasetTooLargeError(ValueError):
+    """数据集规模超限异常（行数/列数）"""
+    pass
+
+
+def validate_dataframe_size(df: pd.DataFrame) -> None:
+    """校验 DataFrame 规模，超限抛 DatasetTooLargeError。
+
+    同步路径（parse_file_sync）和异步路径（tasks.process_large_file）
+    都调用此函数，保证两条路径的上限逻辑一致。
+    """
+    row_count = len(df)
+    if row_count > MAX_ROWS_PER_DATASET:
+        raise DatasetTooLargeError(
+            f'数据集 {row_count} 行超过上限 {MAX_ROWS_PER_DATASET} 行，'
+            f'请拆分或筛选后上传'
+        )
+    col_count = len(df.columns)
+    if col_count > MAX_COLUMNS_PER_DATASET:
+        raise DatasetTooLargeError(
+            f'数据集 {col_count} 列超过上限 {MAX_COLUMNS_PER_DATASET} 列，'
+            f'请删减列后上传'
+        )
+
+
+def delete_dataset_completely(dataset: Dataset) -> None:
+    """彻底清理 dataset：删除文件 + 删除记录。
+
+    超限等不可恢复的错误用此函数清理，避免留下 failed 状态的垃圾记录
+    和 media 目录的残留文件。同步路径和异步路径共用。
+    """
+    # 先删文件（file.delete(save=False) 不触发 ORM save，避免循环）
+    try:
+        dataset.file.delete(save=False)
+    except Exception:
+        pass
+    dataset.delete()
+
 
 def parse_file_sync(dataset: Dataset) -> None:
     """同步解析文件（<10MB）"""
@@ -15,6 +59,7 @@ def parse_file_sync(dataset: Dataset) -> None:
         
         with transaction.atomic():
             df = _read_file(dataset.file.path, dataset.file_name)
+            validate_dataframe_size(df)
             df = clean_dataframe(df)
             bulk_create_rows(dataset, df)
 
@@ -23,7 +68,12 @@ def parse_file_sync(dataset: Dataset) -> None:
             dataset.status = 'completed'
             dataset.save(update_fields=['row_count', 'column_count', 'status', 'updated_at'])
 
+    except DatasetTooLargeError:
+        # 超限是不可恢复的，清理 dataset 记录和文件，避免留下垃圾
+        delete_dataset_completely(dataset)
+        raise
     except Exception:
+        # 其他失败（如解析错误）保留 failed 记录，便于在 Admin 排查
         dataset.status = 'failed'
         dataset.save(update_fields=['status', 'updated_at'])
         raise

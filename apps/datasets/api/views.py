@@ -12,6 +12,7 @@ from apps.datasets.services.upload_lock import UploadLockService
 from apps.datasets.services.parser import ALLOWED_EXTENSIONS
 
 SMALL_FILE_THRESHOLD = 10 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB，与 Nginx client_max_body_size 对齐
 
 
 class DatasetViewSet(viewsets.ModelViewSet):
@@ -40,6 +41,14 @@ class DatasetViewSet(viewsets.ModelViewSet):
             return Response(
                 {'error': f'不支持的文件格式，仅支持 {", ".join(ALLOWED_EXTENSIONS)}'},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 文件大小校验（与 Nginx client_max_body_size 对齐，
+        # 本地开发无 Nginx 时这层兜底，保证本地/生产行为一致）
+        if file.size > MAX_FILE_SIZE:
+            return Response(
+                {'error': f'文件超过 {MAX_FILE_SIZE // 1024 // 1024}MB 上限'},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             )
 
         # 流式计算 MD5
