@@ -37,15 +37,20 @@ class NL2SQLQueryView(APIView):
         service = NL2SQLService(dataset)
         result = service.query(question)
 
-        # 记录查询历史
+        # 记录查询历史（成功查询持久化前 20 行预览，失败留 null）
+        is_success = result.get('success', False)
+        data = result.get('data', []) if is_success else []
         history = QueryHistory.objects.create(
             dataset=dataset,
             user=request.user,
             question=question,
             generated_sql=result.get('sql', ''),
-            is_success=result.get('success', False),
+            is_success=is_success,
             error_message=result.get('error', ''),
             execution_time_ms=result.get('execution_time_ms'),
+            result_count=len(data),
+            result_preview=data[:20] if data else None,
+            result_columns=list(data[0].keys()) if data else None,
         )
 
         result['query_id'] = str(history.id)
@@ -81,4 +86,57 @@ class QueryHistoryView(APIView):
             'results': serializer.data,
             'page': page,
             'page_size': page_size,
+        })
+
+
+class QueryRerunView(APIView):
+    """重跑历史查询：用历史记录里的 SQL 重新执行，返回完整结果（不落库）。
+
+    场景：查询历史只存前 20 行预览，用户想看完整结果时点重跑。
+    项目是"上传快照"模式，数据集不变，重跑结果与当时一致，所以无需缓存。
+    复用 ExportService.execute_query（已含自动 LIMIT 1000）。
+    """
+    permission_classes = [IsViewer]
+
+    def post(self, request, history_id):
+        # 1. 取历史记录（按 user 隔离，只能重跑自己的）
+        try:
+            history = QueryHistory.objects.get(id=history_id, user=request.user)
+        except QueryHistory.DoesNotExist:
+            return Response(
+                {'error': '查询记录不存在'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # 2. 校验：只有当时成功的查询才能重跑
+        if not history.is_success:
+            return Response(
+                {'error': '该查询当时执行失败，无法重跑'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 3. 校验：数据集是否还在（被删除的不能重跑）
+        if not history.dataset or history.dataset.status != 'completed':
+            return Response(
+                {'error': '数据集已不存在或状态异常，无法重跑'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # 4. 重跑：复用 ExportService（已含自动 LIMIT 1000）
+        from apps.export.services.exporter import ExportService
+        try:
+            data = ExportService.execute_query(history.generated_sql)
+        except Exception as e:
+            return Response(
+                {'error': f'重跑失败：{e}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # 5. 返回完整结果（不存）
+        return Response({
+            'history_id': str(history.id),
+            'question': history.question,
+            'generated_sql': history.generated_sql,
+            'data': data,
+            'row_count': len(data),
         })
