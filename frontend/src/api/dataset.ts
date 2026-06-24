@@ -22,6 +22,16 @@ export const datasetApi = {
   getAnalysis(id: string) {
     return request.get(`/api/datasets/${id}/analysis/`)
   },
+
+  /** 分享数据集给指定用户（analyst/admin 可调） */
+  share(id: string, userId: number) {
+    return request.post(`/api/datasets/${id}/share/`, { user_id: userId })
+  },
+
+  /** 获取可分享的用户列表（analyst/admin 可调，仅返回 id + username） */
+  getShareableUsers() {
+    return request.get(`/api/datasets/shareable_users/`)
+  },
 }
 
 /** WebSocket 推送的消息格式（与后端 tasks._send_progress 对应） */

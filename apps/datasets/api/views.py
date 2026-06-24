@@ -188,6 +188,20 @@ class DatasetViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
+    @action(detail=False, methods=['get'], url_path='shareable_users')
+    def shareable_users(self, request):
+        """获取可分享的用户列表（analyst/admin 可调）。
+
+        分享弹窗需要这个接口拉取用户列表做下拉。只返回 id + username +
+        role，避免泄露手机号/邮箱等敏感信息。排除当前用户自己（不能分享给自己）。
+        """
+        from apps.users.models import User
+        users = User.objects.filter(is_active=True).exclude(id=request.user.id)
+        return Response([
+            {'id': u.id, 'username': u.username, 'role': u.role}
+            for u in users
+        ])
+
 
 def _compute_md5(file) -> str:
     md5_hash = hashlib.md5()

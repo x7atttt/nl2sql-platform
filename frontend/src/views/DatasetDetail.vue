@@ -5,7 +5,18 @@
         <el-button :icon="ArrowLeft" @click="$router.push('/datasets')">返回</el-button>
         <h2>{{ dataset?.name || '数据集详情' }}</h2>
       </div>
-      <el-tag v-if="dataset" :type="statusType(dataset.status)" size="large">{{ statusLabel(dataset.status) }}</el-tag>
+      <div class="header-right">
+        <el-button
+          v-if="canShare"
+          type="primary"
+          :icon="Share"
+          :disabled="!canShareThisDataset"
+          @click="openShareDialog"
+        >
+          分享数据集
+        </el-button>
+        <el-tag v-if="dataset" :type="statusType(dataset.status)" size="large">{{ statusLabel(dataset.status) }}</el-tag>
+      </div>
     </div>
 
     <div v-if="dataset" class="info-row page-section">
@@ -129,13 +140,49 @@
         </div>
       </el-tab-pane>
     </el-tabs>
+
+    <!-- 分享数据集弹窗 -->
+    <el-dialog v-model="shareDialogVisible" title="分享数据集" width="440px">
+      <el-form label-width="80px">
+        <el-form-item label="数据集">
+          <span>{{ dataset?.name }}</span>
+        </el-form-item>
+        <el-form-item label="分享给">
+          <el-select
+            v-model="shareTargetId"
+            placeholder="选择用户"
+            filterable
+            :loading="shareUsersLoading"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="u in shareableUsers"
+              :key="u.id"
+              :label="`${u.username}（${roleLabel(u.role)}）`"
+              :value="u.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="shareDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="sharing"
+          :disabled="!shareTargetId"
+          @click="handleShare"
+        >
+          确认分享
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Search, ArrowLeft, Download, DocumentCopy } from '@element-plus/icons-vue'
+import { Search, ArrowLeft, Download, DocumentCopy, Share } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { datasetApi } from '../api/dataset'
 import { queryApi } from '../api/query'
@@ -159,6 +206,26 @@ const canExport = computed(() => {
   const role = store.user?.role
   return role === 'admin' || role === 'analyst'
 })
+
+// 分享功能：admin/analyst 可见按钮；analyst 只能分享自己 owner 的
+const canShare = computed(() => {
+  const role = store.user?.role
+  return role === 'admin' || role === 'analyst'
+})
+const canShareThisDataset = computed(() => {
+  if (!dataset.value) return false
+  const role = store.user?.role
+  if (role === 'admin') return true                        // admin 能分享任意
+  if (role === 'analyst') return dataset.value.owner === store.user?.id  // analyst 只能分享自己的
+  return false
+})
+
+// 分享弹窗状态
+const shareDialogVisible = ref(false)
+const shareableUsers = ref<{ id: number; username: string; role: string }[]>([])
+const shareUsersLoading = ref(false)
+const shareTargetId = ref<number | null>(null)
+const sharing = ref(false)
 
 const resultColumns = computed(() => {
   if (!queryResult.value?.data?.length) return []
@@ -227,6 +294,40 @@ async function handleExport(format: 'csv' | 'xlsx') {
   }
 }
 
+async function openShareDialog() {
+  shareDialogVisible.value = true
+  shareTargetId.value = null
+  shareUsersLoading.value = true
+  try {
+    const res = await datasetApi.getShareableUsers()
+    shareableUsers.value = res.data
+  } catch {
+    ElMessage.error('获取用户列表失败')
+  } finally {
+    shareUsersLoading.value = false
+  }
+}
+
+async function handleShare() {
+  if (!shareTargetId.value || !dataset.value) return
+  sharing.value = true
+  try {
+    const res = await datasetApi.share(dataset.value.id, shareTargetId.value)
+    ElMessage.success(res.data.message || '分享成功')
+    shareDialogVisible.value = false
+  } catch (e: any) {
+    const msg = e?.response?.data?.error || '分享失败'
+    ElMessage.error(msg)
+  } finally {
+    sharing.value = false
+  }
+}
+
+function roleLabel(role: string) {
+  const map: Record<string, string> = { admin: '管理员', analyst: '分析师', viewer: '只读用户' }
+  return map[role] || role
+}
+
 function statusType(s: string) {
   const map: Record<string, string> = { completed: 'success', processing: '', pending: 'info', failed: 'danger' }
   return map[s] || 'info'
@@ -247,6 +348,12 @@ function formatSize(bytes: number) {
 
 <style scoped>
 .header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-right {
   display: flex;
   align-items: center;
   gap: 12px;
