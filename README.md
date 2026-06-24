@@ -1,6 +1,6 @@
 # AI-Driven Data Processing Platform
 
-Django + Celery + LangChain 构建的数据处理平台。用户上传 CSV/Excel，用自然语言查数据，AI 自动生成 SQL 并执行返回结果。
+Django + Celery + LangChain 构建的自然语言数据查询平台。分析师统一上传 CSV/Excel 维护共享数据源并按需分享，用户即可用自然语言提问，AI 自动生成 SQL 并执行返回结果，把分析师从重复取数中解放出来。
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue)](https://www.python.org/)
 [![Django](https://img.shields.io/badge/Django-5.1-green)](https://www.djangoproject.com/)
@@ -10,11 +10,12 @@ Django + Celery + LangChain 构建的数据处理平台。用户上传 CSV/Excel
 
 ## Features
 
-- **数据集管理**：上传 CSV/Excel 文件，异步解析入库，WebSocket 实时推送处理进度
+- **数据集管理**：分析师上传 CSV/Excel 文件，异步解析入库，WebSocket 实时推送处理进度；三道规模上限保护（文件 50MB / 行数 10 万 / 列数 100）
 - **自然语言查询**：AI 自动将中文问题转为 SQL 并执行（NL2SQL）
 - **数据分析**：自动统计每列类型、空值、分布、高频值等
+- **查询历史**：持久化前 20 行结果预览，支持一键重跑历史 SQL 获取完整结果
 - **数据导出**：查询结果导出为 CSV / Excel
-- **RBAC 权限**：admin / analyst / viewer 三角色，行级数据隔离
+- **RBAC 权限**：admin / analyst / viewer 三角色，通过 DatasetShare 分享模型实现数据集级授权，生产者/消费者职责分离
 - **幂等上传**：Redis 分布式锁 + 数据库查重 + 数据库唯一约束，三道防线防重复
 - **Celery 任务可靠性**：指数退避重试 + 死信队列
 - **WebSocket 实时进度**：替代 HTTP 轮询，Celery 任务每处理 1 万行推送一次进度
@@ -139,8 +140,10 @@ npm run dev    # http://localhost:5173
 | `/api/datasets/` | GET/POST | List / Upload | Upload: Analyst+ |
 | `/api/datasets/{id}/` | GET/DELETE | Detail / Delete | Delete: Analyst+ |
 | `/api/datasets/{id}/analysis/` | GET | Column statistics | Required |
+| `/api/datasets/{id}/share/` | POST | Share dataset to a user | Analyst+ |
 | `/api/query/{dataset_id}/` | POST | Natural language query | Required |
-| `/api/query/history/` | GET | Query history | Required |
+| `/api/query/history/` | GET | Query history (with 20-row preview) | Required |
+| `/api/query/history/{id}/rerun/` | POST | Rerun history SQL for full result | Required |
 | `/api/export/{query_id}/csv/` | GET | Export CSV | Analyst+ |
 | `/api/export/{query_id}/xlsx/` | GET | Export Excel | Analyst+ |
 
@@ -164,21 +167,29 @@ npm run dev    # http://localhost:5173
 
 ## RBAC
 
+通过 DatasetShare 分享模型实现数据集级授权：分析师上传后主动分享给指定用户，viewer 仅能查询被分享的数据集，实现生产者/消费者职责分离。
+
 | Feature | Admin | Analyst | Viewer |
 |---------|-------|---------|--------|
-| Upload datasets | ✅ | ✅ | ❌ |
-| Delete datasets | ✅ | ✅ | ❌ |
-| Query (NL2SQL) | ✅ | ✅ | ✅ |
-| Export data | ✅ | ✅ | ❌ |
+| Upload datasets | ✅ All | ✅ Own | ❌ |
+| Delete datasets | ✅ All | ✅ Own | ❌ |
+| Share datasets | ✅ | ✅ Own | ❌ |
+| Visible datasets | ✅ All | ✅ Own | ✅ Shared only |
+| Query (NL2SQL) | ✅ All | ✅ Own | ✅ Shared only |
+| Query history / Rerun | ✅ Own | ✅ Own | ✅ Own |
+| Export data | ✅ | ✅ Own | ❌ |
 | Manage users | ✅ | ❌ | ❌ |
 
-All querysets are filtered by `owner=request.user` for row-level isolation.
+数据可见性按角色分层：admin 看全部，analyst 只看自己上传的，viewer 只看被分享给自己的（`get_queryset` 按 `shares__shared_to` 过滤）。
 
 ## Key Design Decisions
 
+- **Dataset Sharing**: DatasetShare 模型 + 唯一约束，分析师分享数据集给指定用户（数据集级授权），对齐 Superset/Metabase 的 Viewer 机制
+- **Upload Size Limits**: 三道规模上限保护——文件 50MB（业务层校验，与 Nginx 对齐）、行数 10 万、列数 100，超限自动清理 dataset 记录
 - **Idempotent Upload**: Redis SETNX lock + DB `(owner, file_md5)` unique constraint
+- **Query History Preview**: 持久化前 20 行结果预览（~10KB/条，相比完整结果降低 50 倍存储），支持一键重跑历史 SQL 获取完整结果
 - **Celery Reliability**: `acks_late=True`, exponential backoff retry (max 5), dead letter on failure
-- **NL2SQL Pipeline**: 7-step workflow with 3-layer SQL security, auto-retry on failure (max 3), automatic LIMIT 1000
+- **NL2SQL Pipeline**: 7-step workflow with 3-layer SQL security, auto-retry on failure (max 3), automatic LIMIT 1000, ORDER BY NULLS LAST
 - **Frontend Theme**: CSS custom properties + Element Plus variable overrides, zero additional dependencies
 
 ## Environment Variables
