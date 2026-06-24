@@ -4,10 +4,13 @@ from .models import QueryHistory
 
 @admin.register(QueryHistory)
 class QueryHistoryAdmin(admin.ModelAdmin):
-    list_display = ('dataset', 'user', 'question_short', 'is_success', 'created_at')
-    list_filter = ('is_success', 'created_at')
-    search_fields = ('question', 'generated_sql')
-    readonly_fields = ('dataset', 'user', 'question', 'generated_sql', 'error_message')
+    list_display = ('dataset', 'user', 'question_short', 'is_success', 'result_count', 'created_at')
+    list_filter = ('is_success', 'created_at')#右侧会出现筛选器，可以按“是否成功”和“创建时间”过滤记录
+    search_fields = ('question', 'generated_sql')#顶部搜索框会支持按问题文本和生成的 SQL 搜索。
+    readonly_fields = (
+        'dataset', 'user', 'question', 'generated_sql', 'error_message',
+        'execution_time_ms', 'result_count', 'result_preview', 'result_columns',
+    )
     ordering = ('-created_at',)
 
     @admin.display(description='问题')

@@ -8,4 +8,8 @@ export const queryApi = {
   getHistory(params: { page?: number; dataset_id?: string } = {}) {
     return request.get('/api/query/history/', { params })
   },
+
+  rerun(historyId: string) {
+    return request.post(`/api/query/history/${historyId}/rerun/`)
+  },
 }

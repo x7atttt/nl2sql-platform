@@ -76,7 +76,9 @@
           >
             <el-button type="primary">选择文件</el-button>
             <template #tip>
-              <div class="el-upload__tip">支持 .csv / .xlsx / .xls</div>
+              <div class="el-upload__tip">
+                支持 .csv / .xlsx / .xls，单个文件最大 50MB，不超过 10 万行 / 100 列
+              </div>
             </template>
           </el-upload>
         </el-form-item>
@@ -143,6 +145,14 @@ function onPageChange(p: number) {
 }
 
 function onFileChange(file: any) {
+  // 前置文件大小校验（与服务端 MAX_FILE_SIZE = 50MB 对齐）
+  // 本地秒拒，避免上传一半才被服务端 413 拒绝
+  const MAX_FILE_SIZE = 50 * 1024 * 1024
+  if (file.size > MAX_FILE_SIZE) {
+    ElMessage.error('文件超过 50MB 上限')
+    uploadRef.value?.clearFiles()
+    return
+  }
   uploadForm.value.file = file.raw
 }
 

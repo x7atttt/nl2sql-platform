@@ -12,6 +12,7 @@ from apps.datasets.services.upload_lock import UploadLockService
 from apps.datasets.services.parser import ALLOWED_EXTENSIONS
 
 SMALL_FILE_THRESHOLD = 10 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB，与 Nginx client_max_body_size 对齐
 
 
 class DatasetViewSet(viewsets.ModelViewSet):
@@ -21,12 +22,22 @@ class DatasetViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
 
     def get_permissions(self):
-        if self.action in ('create', 'destroy'):
+        if self.action in ('create', 'destroy', 'share'):
             return [IsAnalyst()]
         return [IsViewer()]
 
     def get_queryset(self):
-        return Dataset.objects.filter(owner=self.request.user).order_by('-created_at')
+        user = self.request.user
+        if user.is_admin:
+            # admin 看全部（管理需要）
+            return Dataset.objects.all().order_by('-created_at')
+        if user.is_analyst:
+            # analyst 只看自己上传的
+            return Dataset.objects.filter(owner=user).order_by('-created_at')
+        # viewer：只看被分享给自己的（核心修复 viewer 死锁）
+        return Dataset.objects.filter(
+            shares__shared_to=user
+        ).distinct().order_by('-created_at')
 
     def create(self, request, *args, **kwargs):
         file = request.FILES.get('file')
@@ -40,6 +51,14 @@ class DatasetViewSet(viewsets.ModelViewSet):
             return Response(
                 {'error': f'不支持的文件格式，仅支持 {", ".join(ALLOWED_EXTENSIONS)}'},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 文件大小校验（与 Nginx client_max_body_size 对齐，
+        # 本地开发无 Nginx 时这层兜底，保证本地/生产行为一致）
+        if file.size > MAX_FILE_SIZE:
+            return Response(
+                {'error': f'文件超过 {MAX_FILE_SIZE // 1024 // 1024}MB 上限'},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             )
 
         # 流式计算 MD5
@@ -121,6 +140,53 @@ class DatasetViewSet(viewsets.ModelViewSet):
             'overview': get_dataset_overview(dataset),
             'column_stats': get_column_stats(dataset),
         })
+
+    @action(detail=True, methods=['post'], url_path='share')
+    def share(self, request, pk=None):
+        """analyst 把数据集分享给指定用户（viewer）。
+
+        分享 = 可见性授权：viewer 默认看不到任何数据集，必须被 analyst
+        显式分享后才能查询。对齐 Superset/Metabase 的 Viewer 授权机制。
+        """
+        dataset = self.get_object()  # 走 get_queryset，analyst 只能分享自己的
+
+        target_user_id = request.data.get('user_id')
+        if not target_user_id:
+            return Response(
+                {'error': '请提供 user_id'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from apps.users.models import User
+        try:
+            target = User.objects.get(id=target_user_id, is_active=True)
+        except User.DoesNotExist:
+            return Response(
+                {'error': '目标用户不存在'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if target.id == request.user.id:
+            return Response(
+                {'error': '不能分享给自己'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from apps.datasets.models import DatasetShare
+        share, created = DatasetShare.objects.get_or_create(
+            dataset=dataset,
+            shared_to=target,
+            defaults={'shared_by': request.user, 'permission': 'query'},
+        )
+        if not created:
+            return Response(
+                {'message': '已分享过，无需重复'},
+                status=status.HTTP_200_OK,
+            )
+        return Response(
+            {'message': f'已分享给 {target.username}'},
+            status=status.HTTP_201_CREATED,
+        )
 
 
 def _compute_md5(file) -> str:

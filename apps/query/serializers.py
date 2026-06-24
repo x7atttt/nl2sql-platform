@@ -20,6 +20,8 @@ class QueryHistorySerializer(serializers.ModelSerializer):
         fields = (
             'id', 'dataset', 'dataset_name', 'question',
             'generated_sql', 'is_success', 'error_message',
-            'execution_time_ms', 'created_at',
+            'execution_time_ms',
+            'result_count', 'result_preview', 'result_columns',
+            'created_at',
         )
         read_only_fields = fields

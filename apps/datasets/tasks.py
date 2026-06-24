@@ -17,7 +17,12 @@ def process_large_file(self, dataset_id: str):
     超过5次标记为 failed（死信队列），Admin 后台可见。
     """
     from apps.datasets.models import Dataset, DataRow
-    from apps.datasets.services.parser import clean_dataframe
+    from apps.datasets.services.parser import (
+        clean_dataframe,
+        validate_dataframe_size,
+        DatasetTooLargeError,
+        MAX_ROWS_PER_DATASET,
+    )
     import pandas as pd
 
     try:
@@ -38,6 +43,18 @@ def process_large_file(self, dataset_id: str):
         for chunk_df in reader:
             chunk_df = clean_dataframe(chunk_df)
 
+            # 规模校验：列数（首个 chunk 即可判断）+ 累计行数
+            # 分块读取没有完整 DataFrame，所以列数校验放循环内首个 chunk，
+            # 行数校验用累加 total_rows 比对上限，超限立即中止避免继续写入。
+            if total_rows == 0:
+                # 首个 chunk：校验列数 + 行数是否已超
+                validate_dataframe_size(chunk_df)
+            elif total_rows + len(chunk_df) > MAX_ROWS_PER_DATASET:
+                raise DatasetTooLargeError(
+                    f'数据集行数超过上限 {MAX_ROWS_PER_DATASET} 行，'
+                    f'请拆分或筛选后上传'
+                )
+
             # 性能优化：用 to_dict('records') 向量化转换替代 iterrows() 逐行遍历
             # iterrows 每行生成一个 Series 对象，开销极大；to_dict('records') 一次性
             # 转换为 dict 列表，与同步路径 parser.bulk_create_rows 实现统一。
@@ -56,6 +73,17 @@ def process_large_file(self, dataset_id: str):
         dataset.status = 'completed'
         dataset.save(update_fields=['row_count', 'status', 'updated_at'])
         _send_progress(dataset_id, total_rows, status='completed')
+
+    except DatasetTooLargeError as exc:
+        # 超限是不可恢复的，重试也无意义，直接清理 + 通知前端
+        logger.error(f'数据集 {dataset_id} 超限: {exc}')
+        try:
+            dataset = Dataset.objects.get(id=dataset_id)
+            from apps.datasets.services.parser import delete_dataset_completely
+            delete_dataset_completely(dataset)
+        except Dataset.DoesNotExist:
+            pass
+        _send_progress(dataset_id, 0, status='failed')
 
     except Exception as exc:
         logger.error(f'处理数据集 {dataset_id} 失败: {exc}')

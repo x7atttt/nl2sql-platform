@@ -16,6 +16,9 @@ class QueryHistory(models.Model):
     is_success = models.BooleanField(default=False, verbose_name='是否成功')
     error_message = models.TextField(blank=True, verbose_name='错误信息')
     execution_time_ms = models.IntegerField(null=True, verbose_name='执行时间(ms)')
+    result_count = models.IntegerField(default=0, verbose_name='结果行数')
+    result_preview = models.JSONField(null=True, blank=True, verbose_name='结果预览(前20行)')
+    result_columns = models.JSONField(null=True, blank=True, verbose_name='结果列名')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
