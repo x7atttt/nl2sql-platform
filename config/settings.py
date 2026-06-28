@@ -87,6 +87,15 @@ CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
+# visibility_timeout：acks_late 任务被 worker 取走后，多久没 ACK 就重新可见。
+# Redis broker 默认 1 小时——若单任务执行超过该时长，消息会被重新投递导致重复执行。
+# 本项目大文件解析任务级开了 acks_late=True（tasks.py），最长任务（10万行）实测几十秒，
+# 但 2 核 2G 服务器多任务抢 CPU 时可能拖长，故显式调到 12 小时留极大余量。
+# 注意：用 Redis 作 broker 时，broker / result_backend 两处的 visibility_timeout 必须一致，
+# 否则 Celery 会发不一致告警。三处统一设为 43200。
+_VISIBILITY_TIMEOUT = 43200  # 12 小时（秒）
+CELERY_BROKER_TRANSPORT_OPTIONS = {'visibility_timeout': _VISIBILITY_TIMEOUT}
+CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {'visibility_timeout': _VISIBILITY_TIMEOUT}
 
 # Channels
 CHANNEL_LAYERS = {

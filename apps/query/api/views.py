@@ -70,9 +70,13 @@ class QueryHistoryView(APIView):
     permission_classes = [IsViewer]
 
     def get(self, request):
-        queryset = QueryHistory.objects.filter(
-            user=request.user
-        ).select_related('dataset').order_by('-created_at')
+        # 权限隔离：admin 看全部用户的查询历史（用于审计/排查/使用分析，
+        # 对标 Superset/Metabase）；非 admin 只看自己的（最小权限）。
+        if request.user.is_admin:
+            queryset = QueryHistory.objects.all()
+        else:
+            queryset = QueryHistory.objects.filter(user=request.user)
+        queryset = queryset.select_related('dataset', 'user').order_by('-created_at')
 
         dataset_id = request.query_params.get('dataset_id')
         if dataset_id:

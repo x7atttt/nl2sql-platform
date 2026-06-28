@@ -95,6 +95,7 @@
         </el-table-column>
 
         <el-table-column prop="dataset_name" label="数据集" min-width="120" />
+        <el-table-column v-if="isAdmin" prop="username" label="查询人" width="100" />
         <el-table-column prop="question" label="问题" min-width="200" show-overflow-tooltip />
         <el-table-column label="SQL" min-width="250">
           <template #default="{ row }">
@@ -142,14 +143,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { queryApi } from '../api/query'
 import { datasetApi } from '../api/dataset'
+import { useUserStore } from '../stores/user'
 
 const router = useRouter()
+const store = useUserStore()
+const isAdmin = computed(() => store.user?.role === 'admin')
 const loading = ref(false)
 const records = ref<any[]>([])
 const total = ref(0)
