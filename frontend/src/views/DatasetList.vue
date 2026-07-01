@@ -3,6 +3,15 @@
     <div class="page-header">
       <h2>数据集管理</h2>
       <el-button
+        v-if="canShare"
+        type="primary"
+        :icon="Share"
+        :disabled="selectedIds.length === 0"
+        @click="openBatchShareDialog"
+      >
+        批量分享<template v-if="selectedIds.length > 0">（{{ selectedIds.length }}）</template>
+      </el-button>
+      <el-button
         v-if="canUpload"
         type="primary"
         :icon="Upload"
@@ -13,7 +22,8 @@
     </div>
 
     <div class="page-section">
-      <el-table :data="datasets" v-loading="loading" stripe>
+      <el-table :data="datasets" v-loading="loading" stripe row-key="id" @selection-change="handleSelectionChange">
+        <el-table-column type="selection" width="48" />
         <el-table-column prop="name" label="名称" min-width="150" />
         <el-table-column prop="file_name" label="文件名" min-width="150" />
         <el-table-column label="行数" width="90">
@@ -98,13 +108,48 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="shareDialogVisible" title="批量分享数据集" width="440px">
+      <el-form label-width="80px">
+        <el-form-item label="数据集">
+          <span>已选 {{ selectedIds.length }} 个数据集</span>
+        </el-form-item>
+        <el-form-item label="分享给">
+          <el-select
+            v-model="shareTargetId"
+            placeholder="选择用户"
+            filterable
+            :loading="shareUsersLoading"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="u in shareableUsers"
+              :key="u.id"
+              :label="`${u.username}（${roleLabel(u.role)}）`"
+              :value="u.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="shareDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="sharing"
+          :disabled="!shareTargetId"
+          @click="handleBatchShare"
+        >
+          确认分享
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Upload } from '@element-plus/icons-vue'
+import { Upload, Share } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { datasetApi, createProgressSocket } from '../api/dataset'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -120,6 +165,25 @@ const canUpload = computed(() => {
   const role = store.user?.role
   return role === 'admin' || role === 'analyst'
 })
+
+// 批量分享：admin/analyst 可见按钮
+const canShare = computed(() => {
+  const role = store.user?.role
+  return role === 'admin' || role === 'analyst'
+})
+
+// 多选状态
+const selectedIds = ref<string[]>([])
+function handleSelectionChange(rows: any[]) {
+  selectedIds.value = rows.map(r => r.id)
+}
+
+// 批量分享弹窗状态
+const shareDialogVisible = ref(false)
+const shareableUsers = ref<{ id: number; username: string; role: string }[]>([])
+const shareUsersLoading = ref(false)
+const shareTargetId = ref<number | null>(null)
+const sharing = ref(false)
 
 const showUploadDialog = ref(false)
 const uploading = ref(false)
@@ -285,6 +349,71 @@ async function handleDelete(row: any) {
     ElMessage.success('删除成功')
     fetchList()
   } catch { /* interceptor handles error message */ }
+}
+
+/**
+ * 批量分享：N 个数据集循环调现有单条 share 接口，后端零改动。
+ * 串行不并发（与批量上传同模式）：get_or_create 幂等，重复分享返回 200 不报错。
+ * 单个失败不中断其余，最后汇总。
+ */
+async function openBatchShareDialog() {
+  if (selectedIds.value.length === 0) {
+    ElMessage.warning('请先选择要分享的数据集')
+    return
+  }
+  shareDialogVisible.value = true
+  shareTargetId.value = null
+  shareUsersLoading.value = true
+  try {
+    const res = await datasetApi.getShareableUsers()
+    shareableUsers.value = res.data
+  } catch {
+    ElMessage.error('获取用户列表失败')
+  } finally {
+    shareUsersLoading.value = false
+  }
+}
+
+async function handleBatchShare() {
+  if (!shareTargetId.value || selectedIds.value.length === 0) return
+  sharing.value = true
+  let okCount = 0
+  const failures: string[] = []
+  try {
+    // 拷贝当前选中，避免循环中被清空
+    const ids = [...selectedIds.value]
+    for (const id of ids) {
+      try {
+        await datasetApi.share(id, shareTargetId.value!)
+        okCount++
+      } catch (e: any) {
+        // 404 = 无权分享（analyst 分享别人的，理论不会发生但兜底）；其他错误收集
+        failures.push(e?.response?.data?.error || '失败')
+      }
+    }
+
+    // 汇总提示
+    if (failures.length === 0) {
+      ElMessage.success(`成功分享 ${okCount} 个数据集`)
+    } else if (okCount > 0) {
+      ElMessage.warning(`${okCount} 个成功，${failures.length} 个失败：` + failures.join('；'))
+    } else {
+      ElMessage.error('分享失败：' + failures.join('；'))
+    }
+
+    // 部分/全成功关弹窗清选中；全失败保留选中让用户重试
+    if (okCount > 0) {
+      shareDialogVisible.value = false
+      selectedIds.value = []
+    }
+  } finally {
+    sharing.value = false
+  }
+}
+
+function roleLabel(role: string) {
+  const map: Record<string, string> = { admin: '管理员', analyst: '分析师', viewer: '只读用户' }
+  return map[role] || role
 }
 
 function goDetail(id: string) {
