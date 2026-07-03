@@ -163,3 +163,84 @@ class QueryRerunView(APIView):
             'data': data,
             'row_count': len(data),
         })
+
+
+class ChartSuggestView(APIView):
+    """LLM 智能图表推荐接口（异步调用，前端拿到查询结果后单独请求）。
+
+    流程：前端查询成功后 → 规则引擎先画默认图 → 同时发请求到本接口 →
+    后端用 LLM 基于问题+SQL+列统计推荐图表 → 前端拿到后智能切换。
+
+    失败降级：LLM 超时/非法 JSON → 返回 {success: false}，前端保持规则引擎图。
+    参考 LIDA 的 Summary 模式 + Vanna 的混合策略。
+    """
+    permission_classes = [IsViewer]
+
+    def post(self, request, history_id):
+        # 1. 取查询历史（admin 全部/非 admin 自己的，与 QueryHistoryView 一致）
+        if request.user.is_admin:
+            history_qs = QueryHistory.objects.all()
+        else:
+            history_qs = QueryHistory.objects.filter(user=request.user)
+        try:
+            history = history_qs.select_related('dataset').get(id=history_id)
+        except QueryHistory.DoesNotExist:
+            return Response(
+                {'error': '查询记录不存在'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # 2. 前置校验：只有成功的查询 + 数据集还在才能推荐
+        if not history.is_success:
+            return Response(
+                {'error': '该查询当时执行失败，无法推荐图表'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not history.dataset or history.dataset.status != 'completed':
+            return Response(
+                {'error': '数据集已不存在或状态异常'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if not history.result_columns:
+            return Response(
+                {'success': False, 'reason': '查询无结果列，无法可视化'},
+            )
+
+        # 3. 重新执行 SQL 取 data + column_types（复用公共执行器）
+        #    不用 result_preview（只有 20 行），LLM 需要完整结果统计
+        from apps.query.services.nl2sql import execute_select_sql
+        from apps.query.services.chart_advisor import suggest_chart
+        try:
+            data, column_types = execute_select_sql(
+                history.generated_sql, infer_types=True,
+            )
+        except Exception as e:
+            return Response(
+                {'success': False, 'reason': f'重跑查询失败：{e}'},
+            )
+
+        if not data:
+            return Response(
+                {'success': False, 'reason': '查询结果为空，无法可视化'},
+            )
+
+        # 4. 调 LLM 推荐图表（失败返回 success: false，前端降级）
+        suggestion = suggest_chart(
+            question=history.question,
+            sql=history.generated_sql,
+            columns=list(data[0].keys()),
+            column_types=column_types,
+            data=data,
+            business_description=history.dataset.business_description,
+        )
+
+        if suggestion is None:
+            return Response({
+                'success': False,
+                'reason': 'LLM 推荐失败，已降级到规则引擎默认图',
+            })
+
+        return Response({
+            'success': True,
+            'suggestion': suggestion,
+        })

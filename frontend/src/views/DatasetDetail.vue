@@ -130,12 +130,13 @@
                 <pre>{{ queryResult.sql }}</pre>
               </div>
 
-              <!-- 查询结果自动可视化（基于列类型规则引擎选型） -->
+              <!-- 查询结果自动可视化（规则引擎先画默认图 + 后台异步调 LLM 智能优化） -->
               <ResultChart
                 v-if="queryResult.data && queryResult.data.length > 0"
                 :data="queryResult.data"
                 :columns="resultColumns"
                 :column-types="queryResult.column_types || {}"
+                :query-id="currentQueryId || undefined"
               />
 
               <div v-if="canExport" class="export-row">
