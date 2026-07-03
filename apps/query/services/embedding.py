@@ -1,6 +1,7 @@
-"""文本向量化服务：调智谱 embedding-3 接口把文本转 2048 维向量。
+"""文本向量化服务：调智谱 embedding-3 接口把文本转 1024 维向量。
 
-复用现有 OPENAI_API_KEY / OPENAI_API_BASE（智谱 OpenAI 兼容协议），
+走 EMBEDDING_API_KEY / EMBEDDING_API_BASE（智谱 OpenAI 兼容协议），
+与 LLM 配置分离（LLM 走 DeepSeek，DeepSeek 不提供 embedding 接口）。
 不引入新依赖（langchain-openai 已装，OpenAIEmbeddings 直接可用）。
 
 用于 few-shot 语义检索：把查询问题向量化后存 QueryHistory.question_embedding，
@@ -26,8 +27,8 @@ def _get_embedder() -> OpenAIEmbeddings:
     if _embedder is None:
         _embedder = OpenAIEmbeddings(
             model=_EMBEDDING_MODEL,
-            api_key=settings.OPENAI_API_KEY,
-            base_url=settings.OPENAI_API_BASE,
+            api_key=settings.EMBEDDING_API_KEY,
+            base_url=settings.EMBEDDING_API_BASE,
             # embedding-3 支持自定义维度（langchain-openai 的 dimensions 是顶层参数）
             dimensions=_EMBEDDING_DIMENSIONS,
         )

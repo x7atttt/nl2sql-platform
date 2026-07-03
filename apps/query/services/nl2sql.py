@@ -154,8 +154,8 @@ class NL2SQLService:
         self.llm = ChatOpenAI(
             model=settings.LLM_MODEL,
             temperature=0,
-            openai_api_key=settings.OPENAI_API_KEY,
-            openai_api_base=settings.OPENAI_API_BASE,
+            openai_api_key=settings.LLM_API_KEY,
+            openai_api_base=settings.LLM_API_BASE,
         )
         self._current_question: str = ''  # query() 入口写入，供 _get_few_shot_cases 生成向量
 

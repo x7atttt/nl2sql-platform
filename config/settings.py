@@ -152,7 +152,12 @@ if not DEBUG:
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
 
-# LLM
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
-OPENAI_API_BASE = os.environ.get('OPENAI_API_BASE', 'https://api.openai.com/v1')
-LLM_MODEL = os.environ.get('LLM_MODEL', 'GLM-4-Flash')
+# LLM（NL2SQL 主查询，走 DeepSeek）
+LLM_API_KEY = os.environ.get('LLM_API_KEY', '')
+LLM_API_BASE = os.environ.get('LLM_API_BASE', 'https://api.deepseek.com')
+LLM_MODEL = os.environ.get('LLM_MODEL', 'deepseek-v4-flash')
+
+# Embedding（few-shot 语义检索，走智谱 embedding-3）
+# 与 LLM 分开配置：DeepSeek 不提供 embedding 接口，embedding 留智谱
+EMBEDDING_API_KEY = os.environ.get('EMBEDDING_API_KEY', '')
+EMBEDDING_API_BASE = os.environ.get('EMBEDDING_API_BASE', 'https://open.bigmodel.cn/api/paas/v4')
