@@ -13,6 +13,16 @@
       </el-button>
       <el-button
         v-if="canUpload"
+        type="danger"
+        :icon="Delete"
+        :disabled="selectedIds.length === 0"
+        :loading="batchDeleting"
+        @click="handleBatchDelete"
+      >
+        批量删除<template v-if="selectedIds.length > 0">（{{ selectedIds.length }}）</template>
+      </el-button>
+      <el-button
+        v-if="canUpload"
         type="primary"
         :icon="Upload"
         @click="showUploadDialog = true"
@@ -159,7 +169,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Upload, Share } from '@element-plus/icons-vue'
+import { Upload, Share, Delete } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { datasetApi, createProgressSocket } from '../api/dataset'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -186,6 +196,7 @@ const canShare = computed(() => {
 const selectedIds = ref<string[]>([])
 function handleSelectionChange(rows: any[]) {
   selectedIds.value = rows.map(r => r.id)
+  selectedRows.value = rows
 }
 
 // 批量分享弹窗状态
@@ -194,6 +205,11 @@ const shareableUsers = ref<{ id: number; username: string; role: string }[]>([])
 const shareUsersLoading = ref(false)
 const shareTargetId = ref<number | null>(null)
 const sharing = ref(false)
+
+// 批量删除状态
+const batchDeleting = ref(false)
+// 选中的完整行（handleSelectionChange 同步维护，用于删除前展示数据集名）
+const selectedRows = ref<any[]>([])
 
 const showUploadDialog = ref(false)
 const uploading = ref(false)
@@ -365,6 +381,66 @@ async function handleDelete(row: any) {
     ElMessage.success('删除成功')
     fetchList()
   } catch { /* interceptor handles error message */ }
+}
+
+/**
+ * 批量删除：N 个数据集循环调现有单删除接口，后端零改动。
+ * 级联删除由 ORM CASCADE 保证（DataRow / DatasetShare / QueryHistory 一并清）。
+ * 串行不并发（与批量分享/上传同模式）；单个失败不中断，最后汇总。
+ */
+async function handleBatchDelete() {
+  if (selectedIds.value.length === 0) return
+  // 拷贝选中行（弹窗展示名称用，循环删时原数组可能变化）
+  const rows = [...selectedRows.value]
+  // 列出数据集名称，超过 5 个折叠显示
+  const names = rows.map((r: any) => r.name)
+  const preview = names.length <= 5
+    ? names.map((n: string) => `• ${n}`).join('\n')
+    : names.slice(0, 5).map((n: string) => `• ${n}`).join('\n') + `\n• ... 等 ${names.length} 个`
+  try {
+    await ElMessageBox.confirm(
+      `确定删除以下 ${rows.length} 个数据集？\n\n${preview}\n\n删除后数据行、分享记录、查询历史将一并清除，无法恢复。`,
+      '批量删除确认',
+      { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return  // 用户取消
+  }
+
+  batchDeleting.value = true
+  let okCount = 0
+  const failures: string[] = []
+  try {
+    const ids = [...selectedIds.value]
+    for (const id of ids) {
+      try {
+        await datasetApi.delete(id)
+        okCount++
+      } catch (e: any) {
+        // 404=已被并发删；403=无权删（analyst 删别人的）；其他错误收集
+        const msg = e?.response?.data?.error || '删除失败'
+        failures.push(msg)
+      }
+    }
+
+    // 汇总提示
+    if (failures.length === 0) {
+      ElMessage.success(`成功删除 ${okCount} 个数据集`)
+    } else if (okCount > 0) {
+      ElMessage.warning(`${okCount} 个成功，${failures.length} 个失败：` + failures.join('；'))
+    } else {
+      ElMessage.error('删除失败：' + failures.join('；'))
+    }
+
+    // 刷新列表 + 清空选中（无论部分成功还是全成功）
+    if (okCount > 0) {
+      selectedIds.value = []
+      selectedRows.value = []
+      fetchList()
+    }
+  } finally {
+    batchDeleting.value = false
+  }
 }
 
 /**
