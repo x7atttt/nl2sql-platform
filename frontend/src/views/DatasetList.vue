@@ -163,11 +163,56 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 批量删除弹窗 -->
+    <el-dialog
+      v-model="deleteDialogVisible"
+      title="批量删除数据集"
+      width="480px"
+      :close-on-click-modal="false"
+    >
+      <div class="delete-body">
+        <div class="delete-head">
+          <el-icon class="delete-head-icon"><WarningFilled /></el-icon>
+          <span>即将删除 <strong>{{ deleteTargetNames.length }}</strong> 个数据集</span>
+        </div>
+
+        <div class="delete-list">
+          <div v-for="name in deleteVisibleNames" :key="name" class="delete-item">
+            <el-icon class="delete-item-icon"><Document /></el-icon>
+            <span class="delete-item-name" :title="name">{{ name }}</span>
+          </div>
+          <div v-if="deleteHiddenCount > 0" class="delete-more">
+            …还有 {{ deleteHiddenCount }} 项
+          </div>
+        </div>
+
+        <el-alert
+          type="error"
+          :closable="false"
+          show-icon
+          class="delete-alert"
+        >
+          删除后数据行、分享记录、查询历史将一并清除，无法恢复。
+        </el-alert>
+      </div>
+
+      <template #footer>
+        <el-button @click="deleteDialogVisible = false">取消</el-button>
+        <el-button
+          type="danger"
+          :loading="batchDeleting"
+          @click="confirmBatchDelete"
+        >
+          删除 {{ deleteTargetNames.length }} 项
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Upload, Share, Delete, Document, WarningFilled } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
@@ -210,6 +255,15 @@ const sharing = ref(false)
 const batchDeleting = ref(false)
 // 选中的完整行（handleSelectionChange 同步维护，用于删除前展示数据集名）
 const selectedRows = ref<any[]>([])
+
+// 批量删除弹窗状态
+const deleteDialogVisible = ref(false)
+// 待删除的数据集名称列表（弹窗打开时快照，循环删除时不受列表刷新影响）
+const deleteTargetNames = ref<string[]>([])
+const deleteVisibleNames = computed(() => deleteTargetNames.value.slice(0, 5))
+const deleteHiddenCount = computed(() =>
+  Math.max(0, deleteTargetNames.value.length - 5),
+)
 
 const showUploadDialog = ref(false)
 const uploading = ref(false)
@@ -384,50 +438,19 @@ async function handleDelete(row: any) {
 }
 
 /**
- * 批量删除：N 个数据集循环调现有单删除接口，后端零改动。
+ * 批量删除：打开弹窗（不直接删）。
  * 级联删除由 ORM CASCADE 保证（DataRow / DatasetShare / QueryHistory 一并清）。
  * 串行不并发（与批量分享/上传同模式）；单个失败不中断，最后汇总。
  */
-async function handleBatchDelete() {
+function handleBatchDelete() {
   if (selectedIds.value.length === 0) return
-  // 拷贝选中行（弹窗展示名称用，循环删时原数组可能变化）
-  const rows = [...selectedRows.value]
-  const names = rows.map((r: any) => r.name)
-  // 列表展示：前 5 个 + 折叠提示
-  const visibleNames = names.slice(0, 5)
-  const hiddenCount = Math.max(0, names.length - 5)
+  // 快照待删名称（用 selectedRows，handleSelectionChange 同步维护）
+  deleteTargetNames.value = selectedRows.value.map((r: any) => r.name)
+  deleteDialogVisible.value = true
+}
 
-  try {
-    await ElMessageBox({
-      title: '批量删除数据集',
-      type: 'warning',
-      customClass: 'batch-delete-dialog',
-      confirmButtonText: `删除 ${names.length} 项`,
-      confirmButtonClass: 'el-button--danger',
-      cancelButtonText: '取消',
-      message: h('div', { class: 'batch-delete-content' }, [
-        h('p', { class: 'bd-desc' }, `即将删除以下 ${names.length} 个数据集：`),
-        h('div', { class: 'bd-list' }, [
-          ...visibleNames.map((n: string) =>
-            h('div', { class: 'bd-item' }, [
-              h('el-icon', { class: 'bd-item-icon' }, [h(Document)]),
-              h('span', { class: 'bd-item-name' }, n),
-            ]),
-          ),
-          hiddenCount > 0
-            ? h('div', { class: 'bd-more' }, `…还有 ${hiddenCount} 项`)
-            : null,
-        ]),
-        h('div', { class: 'bd-warn' }, [
-          h('el-icon', { class: 'bd-warn-icon' }, [h(WarningFilled)]),
-          h('span', '删除后数据行、分享记录、查询历史将一并清除，无法恢复。'),
-        ]),
-      ]),
-    })
-  } catch {
-    return  // 用户取消
-  }
-
+/** 确认删除：循环调单删除接口，串行不并发，单个失败不中断 */
+async function confirmBatchDelete() {
   batchDeleting.value = true
   let okCount = 0
   const failures: string[] = []
@@ -439,8 +462,7 @@ async function handleBatchDelete() {
         okCount++
       } catch (e: any) {
         // 404=已被并发删；403=无权删（analyst 删别人的）；其他错误收集
-        const msg = e?.response?.data?.error || '删除失败'
-        failures.push(msg)
+        failures.push(e?.response?.data?.error || '删除失败')
       }
     }
 
@@ -453,10 +475,11 @@ async function handleBatchDelete() {
       ElMessage.error('删除失败：' + failures.join('；'))
     }
 
-    // 刷新列表 + 清空选中（无论部分成功还是全成功）
+    // 刷新列表 + 清空选中 + 关弹窗（无论部分成功还是全成功）
     if (okCount > 0) {
       selectedIds.value = []
       selectedRows.value = []
+      deleteDialogVisible.value = false
       fetchList()
     }
   } finally {
@@ -567,73 +590,61 @@ function formatTime(t: string) {
   color: var(--el-text-color-secondary);
   font-size: 13px;
 }
-</style>
 
-<!-- 非 scoped：ElMessageBox 渲染到 body teleport，scoped 样式作用不到 -->
-<style>
-.batch-delete-content {
-  max-width: 460px;
+/* 批量删除弹窗 */
+.delete-body {
+  padding: 0 4px;
 }
-.batch-delete-content .bd-desc {
-  margin: 0 0 12px;
-  font-size: 14px;
+.delete-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
   color: var(--el-text-color-primary);
+  margin-bottom: 16px;
 }
-/* 数据集列表卡片 */
-.batch-delete-content .bd-list {
-  max-height: 200px;
+.delete-head-icon {
+  color: var(--el-color-warning);
+  font-size: 20px;
+}
+.delete-list {
+  max-height: 220px;
   overflow-y: auto;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 6px;
   padding: 6px;
   background: var(--el-fill-color-light);
 }
-.batch-delete-content .bd-item {
+.delete-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
+  gap: 10px;
+  padding: 8px 12px;
   border-radius: 4px;
   transition: background 0.15s;
 }
-.batch-delete-content .bd-item:hover {
+.delete-item:hover {
   background: var(--el-fill-color);
 }
-.batch-delete-content .bd-item-icon {
+.delete-item-icon {
   color: var(--el-text-color-secondary);
   flex-shrink: 0;
 }
-.batch-delete-content .bd-item-name {
+.delete-item-name {
   font-size: 13px;
   color: var(--el-text-color-regular);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.batch-delete-content .bd-more {
-  padding: 8px 10px 4px;
+.delete-more {
+  padding: 10px 12px 6px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
   text-align: center;
   font-style: italic;
 }
-/* 危险提示条 */
-.batch-delete-content .bd-warn {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-top: 14px;
-  padding: 10px 12px;
-  background: var(--el-color-danger-light-9);
-  border-left: 3px solid var(--el-color-danger);
-  border-radius: 4px;
-  font-size: 12px;
-  color: var(--el-color-danger-dark-2);
-  line-height: 1.5;
-}
-.batch-delete-content .bd-warn-icon {
-  flex-shrink: 0;
-  font-size: 15px;
-  margin-top: 1px;
+.delete-alert {
+  margin-top: 16px;
 }
 </style>
