@@ -7,6 +7,13 @@
       </div>
       <div class="header-right">
         <el-button
+          v-if="canManage"
+          :icon="EditPen"
+          @click="openEditDialog"
+        >
+          编辑业务说明
+        </el-button>
+        <el-button
           v-if="canShare"
           type="primary"
           :icon="Share"
@@ -25,6 +32,10 @@
         <el-descriptions-item label="行数">{{ dataset.row_count }}</el-descriptions-item>
         <el-descriptions-item label="列数">{{ dataset.column_count }}</el-descriptions-item>
         <el-descriptions-item label="文件大小">{{ formatSize(dataset.file_size) }}</el-descriptions-item>
+        <el-descriptions-item label="业务说明" :span="4">
+          <span v-if="dataset.business_description" class="business-desc">{{ dataset.business_description }}</span>
+          <span v-else class="business-desc-empty">（未填写，NL2SQL 仅依赖列统计生成 SQL）</span>
+        </el-descriptions-item>
       </el-descriptions>
     </div>
 
@@ -119,6 +130,14 @@
                 <pre>{{ queryResult.sql }}</pre>
               </div>
 
+              <!-- 查询结果自动可视化（基于列类型规则引擎选型） -->
+              <ResultChart
+                v-if="queryResult.data && queryResult.data.length > 0"
+                :data="queryResult.data"
+                :columns="resultColumns"
+                :column-types="queryResult.column_types || {}"
+              />
+
               <div v-if="canExport" class="export-row">
                 <el-button @click="handleExport('csv')">
                   <el-icon><Download /></el-icon> 导出 CSV
@@ -176,17 +195,52 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 编辑业务说明弹窗 -->
+    <el-dialog v-model="editDialogVisible" title="编辑业务说明" width="600px">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 16px"
+      >
+        业务说明会注入 NL2SQL 提示词，帮助 AI 理解字段业务语义（列统计只告诉它"数据长什么样"，业务说明告诉它"数据是什么意思"）。
+      </el-alert>
+      <el-form label-width="80px">
+        <el-form-item label="业务说明">
+          <el-input
+            v-model="editBusinessDesc"
+            type="textarea"
+            :rows="8"
+            maxlength="2000"
+            show-word-limit
+            placeholder="填写数据集业务背景/字段含义，例如：
+region: 销售大区（east=华东, north=华北, south=华南, west=西部）
+amount: 订单金额（人民币元，含税）
+status: 订单状态（paid=已支付, pending=待付款, refunded=已退款）
+created_at: 下单时间（UTC）"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingDesc" @click="saveBusinessDesc">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Search, ArrowLeft, Download, DocumentCopy, Share } from '@element-plus/icons-vue'
+import { Search, ArrowLeft, Download, DocumentCopy, Share, EditPen } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { datasetApi } from '../api/dataset'
 import { queryApi } from '../api/query'
 import { exportApi, downloadBlob } from '../api/export'
+import ResultChart from '../components/ResultChart.vue'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
@@ -206,6 +260,20 @@ const canExport = computed(() => {
   const role = store.user?.role
   return role === 'admin' || role === 'analyst'
 })
+
+// 业务说明编辑：admin 全部可改，analyst 只能改自己 owner 的（与 share 权限对齐）
+const canManage = computed(() => {
+  if (!dataset.value) return false
+  const role = store.user?.role
+  if (role === 'admin') return true
+  if (role === 'analyst') return dataset.value.owner === store.user?.id
+  return false
+})
+
+// 业务说明编辑弹窗状态
+const editDialogVisible = ref(false)
+const editBusinessDesc = ref('')
+const savingDesc = ref(false)
 
 // 分享功能：admin/analyst 可见按钮；analyst 只能分享自己 owner 的
 const canShare = computed(() => {
@@ -328,6 +396,29 @@ function roleLabel(role: string) {
   return map[role] || role
 }
 
+function openEditDialog() {
+  // 打开编辑弹窗前回填当前业务说明（避免上次输入残留）
+  editBusinessDesc.value = dataset.value?.business_description || ''
+  editDialogVisible.value = true
+}
+
+async function saveBusinessDesc() {
+  if (!dataset.value) return
+  savingDesc.value = true
+  try {
+    await datasetApi.update(dataset.value.id, { business_description: editBusinessDesc.value })
+    // 同步本地状态，避免再拉一次详情
+    dataset.value.business_description = editBusinessDesc.value
+    editDialogVisible.value = false
+    ElMessage.success('业务说明已更新，下次查询将注入新内容')
+  } catch (e: any) {
+    const msg = e?.response?.data?.error || e?.response?.data?.detail || '保存失败'
+    ElMessage.error(msg)
+  } finally {
+    savingDesc.value = false
+  }
+}
+
 function statusType(s: string) {
   const map: Record<string, string> = { completed: 'success', processing: '', pending: 'info', failed: 'danger' }
   return map[s] || 'info'
@@ -443,5 +534,16 @@ function formatSize(bytes: number) {
   gap: 12px;
   padding-top: var(--space-md);
   border-top: 1px solid var(--brand-border);
+}
+
+.business-desc {
+  white-space: pre-wrap;
+  line-height: 1.6;
+  color: var(--brand-text-primary);
+}
+
+.business-desc-empty {
+  color: var(--brand-text-secondary);
+  font-style: italic;
 }
 </style>

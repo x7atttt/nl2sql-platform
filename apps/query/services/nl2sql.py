@@ -45,6 +45,9 @@ SQL_GENERATE_SYSTEM = Template("""你是一个专业的SQL生成助手。根据�
 
 $schema_summary
 
+业务说明（数据字典/字段业务含义，帮助理解数据语义）:
+$business_description
+
 相似查询案例:
 $few_shot_cases
 
@@ -97,17 +100,51 @@ class NL2SQLService:
             openai_api_key=settings.OPENAI_API_KEY,
             openai_api_base=settings.OPENAI_API_BASE,
         )
+        self._current_question: str = ''  # query() 入口写入，供 _get_few_shot_cases 生成向量
 
     # ===== Schema 发现 =====
 
     def _discover_schema(self) -> dict:
         from apps.datasets.services.analyzer import get_schema_summary
+        # business_description 独立注入（不拼进 schema_summary）：
+        # 1) 让 LLM 区分"数据分布"和"业务语义" 2) 改业务文档不影响 schema 缓存命中
         return {
             'schema_summary': get_schema_summary(self.dataset),
             'few_shot_cases': self._get_few_shot_cases(),
+            'business_description': self.dataset.business_description.strip() or '无',
         }
 
     def _get_few_shot_cases(self) -> str:
+        """取语义最相关的 3 条历史成功查询作为 few-shot 案例。
+
+        升级前：order_by('-created_at')[:3]——按时间倒序，可能选到语义不相关的案例
+        升级后：把当前问题向量化，按余弦距离找语义最相关的 3 条
+        降级策略：embedding 生成失败或该数据集无向量化的历史 → 退化为时间倒序
+        """
+        from apps.query.services.embedding import embed_question
+        from pgvector.django import CosineDistance
+
+        question_vec = embed_question(self._current_question) if self._current_question else None
+
+        if question_vec is not None:
+            # 语义检索：annotate 计算余弦距离，按距离升序取最近 3 条
+            cases = list(
+                QueryHistory.objects
+                .filter(
+                    dataset=self.dataset,
+                    is_success=True,
+                    question_embedding__isnull=False,
+                )
+                .annotate(distance=CosineDistance('question_embedding', question_vec))
+                .order_by('distance')[:3]
+            )
+            if cases:
+                return '\n\n'.join(
+                    f"问题: {c.question}\nSQL: {c.generated_sql}" for c in cases
+                )
+            # 该数据集还没有向量化历史，降级到时间倒序
+
+        # 降级：embedding 失败 或 无向量化历史 → 时间倒序取 3 条
         cases = QueryHistory.objects.filter(
             dataset=self.dataset, is_success=True
         ).order_by('-created_at')[:3]
@@ -156,6 +193,7 @@ class NL2SQLService:
                 schema_summary=schema_info['schema_summary'],
                 few_shot_cases=schema_info['few_shot_cases'],
                 dataset_id=str(self.dataset.id),
+                business_description=schema_info.get('business_description', '无'),
             ))),
             ('human', self._escape_braces(SQL_GENERATE_USER.safe_substitute(
                 question=question,
@@ -183,18 +221,55 @@ class NL2SQLService:
 
     # ===== SQL 执行 =====
 
-    def _execute_sql(self, sql: str) -> list:
+    def _execute_sql(self, sql: str) -> tuple:
+        """执行 SQL，返回 (净化后的 rows, 列类型映射)。
+
+        列类型在 sanitize 前推断——_sanitize_for_json 会把 Decimal→float、
+        datetime→ISO 字符串，类型信息丢失后再推断不准。
+        """
         with connection.cursor() as cursor:
             cursor.execute(sql)
             columns = [col[0] for col in cursor.description]
             rows = cursor.fetchall()
+        # 在 sanitize 前用实际 Python 类型推断（比 PG OID 映射简单可靠）
+        column_types = self._infer_column_types(columns, rows)
         # 净化 Decimal/datetime 等非 JSON 类型，保证存 JSONField 和 HTTP Response 都安全
-        return [_sanitize_for_json(dict(zip(columns, row))) for row in rows]
+        sanitized = [_sanitize_for_json(dict(zip(columns, row))) for row in rows]
+        return sanitized, column_types
+
+    @staticmethod
+    def _infer_column_types(columns: list, rows: list) -> dict:
+        """从结果行推断每列简化类型：number / text / date / boolean。
+
+        遍历该列直到找到第一个非 None 值判断类型（首行可能为空）。
+        前端图表选型按这四种类型决定维度列 vs 度量列。
+        """
+        from decimal import Decimal
+        from datetime import datetime, date
+        type_map = {}
+        for col_idx, col_name in enumerate(columns):
+            resolved = 'text'  # 兜底（空列或全 None）
+            for row in rows:
+                val = row[col_idx]
+                if val is None:
+                    continue
+                if isinstance(val, bool):
+                    resolved = 'boolean'
+                elif isinstance(val, (int, float, Decimal)):
+                    resolved = 'number'
+                elif isinstance(val, (datetime, date)):
+                    resolved = 'date'
+                else:
+                    resolved = 'text'
+                break
+            type_map[col_name] = resolved
+        return type_map
 
     # ===== 主流程 =====
 
     def query(self, question: str) -> dict:
         start_time = time.time()
+        self._current_question = question  # 供 _get_few_shot_cases 生成 embedding
 
         # 1. Schema发现
         schema_info = self._discover_schema()
@@ -220,7 +295,7 @@ class NL2SQLService:
         retry_count = 0
         for attempt in range(self.MAX_RETRIES + 1):
             try:
-                results = self._execute_sql(sql)
+                results, column_types = self._execute_sql(sql)
                 elapsed = int((time.time() - start_time) * 1000)
                 return {
                     'sql': sql,
@@ -229,6 +304,7 @@ class NL2SQLService:
                     'execution_time_ms': elapsed,
                     'data': results,
                     'row_count': len(results),
+                    'column_types': column_types,
                 }
             except Exception as e:
                 retry_count += 1

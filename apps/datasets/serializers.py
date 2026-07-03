@@ -7,7 +7,8 @@ class DatasetSerializer(serializers.ModelSerializer):
     class Meta:
         model = Dataset
         fields = [
-            'id', 'name', 'description', 'file', 'file_name', 'file_size',
+            'id', 'name', 'description', 'business_description',
+            'file', 'file_name', 'file_size',
             'row_count', 'column_count', 'status',
             'owner', 'created_at', 'updated_at',
         ]
@@ -22,4 +23,5 @@ class DatasetSerializer(serializers.ModelSerializer):
             'file': {'write_only': True, 'required': True},
             'name': {'required': False},
             'description': {'required': False},
+            'business_description': {'required': False},
         }

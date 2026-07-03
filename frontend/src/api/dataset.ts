@@ -19,6 +19,11 @@ export const datasetApi = {
     return request.delete(`/api/datasets/${id}/`)
   },
 
+  /** 更新数据集（PATCH，如修改业务说明 business_description） */
+  update(id: string, payload: Record<string, unknown>) {
+    return request.patch(`/api/datasets/${id}/`, payload)
+  },
+
   getAnalysis(id: string) {
     return request.get(`/api/datasets/${id}/analysis/`)
   },

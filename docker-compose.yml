@@ -60,7 +60,8 @@ services:
 
   db:
     restart: unless-stopped
-    image: postgres:15
+    # pgvector 镜像：官方 postgres:15 + 预装 vector 扩展（few-shot 语义检索依赖）
+    image: pgvector/pgvector:pg15
     environment:
       POSTGRES_DB: ${DB_NAME:-data_platform}
       POSTGRES_USER: ${DB_USER:-data_platform_user}

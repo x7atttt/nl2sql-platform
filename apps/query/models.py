@@ -1,6 +1,7 @@
 import uuid
 from django.db import models
 from django.conf import settings
+from pgvector.django import VectorField, HnswIndex
 
 
 class QueryHistory(models.Model):
@@ -19,6 +20,12 @@ class QueryHistory(models.Model):
     result_count = models.IntegerField(default=0, verbose_name='结果行数')
     result_preview = models.JSONField(null=True, blank=True, verbose_name='结果预览(前20行)')
     result_columns = models.JSONField(null=True, blank=True, verbose_name='结果列名')
+    # 问题的向量表示（智谱 embedding-3，1024 维），用于 few-shot 语义检索
+    # 用 1024 而非默认 2048：HNSW 索引限制 ≤2000 维，且 1024 对几百条 few-shot 检索精度足够
+    # null=未生成（查询失败或 embedding 接口异常时不写），检索时 filter 排除
+    question_embedding = VectorField(
+        dimensions=1024, null=True, blank=True, verbose_name='问题向量'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -29,5 +36,12 @@ class QueryHistory(models.Model):
             models.Index(
                 fields=['dataset', 'created_at'],
                 name='idx_query_dataset_created',
+            ),
+            # HNSW 索引加速语义检索（few-shot 按问题向量相似度取最近 3 条）
+            # cosine 距离对应归一化向量的点积，embedding-3 默认输出已归一化
+            HnswIndex(
+                name='idx_query_embedding_hnsw',
+                fields=['question_embedding'],
+                opclasses=['vector_cosine_ops'],
             ),
         ]

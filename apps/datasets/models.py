@@ -7,6 +7,13 @@ class Dataset(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255, verbose_name='数据集名称')
     description = models.TextField(blank=True, verbose_name='描述')
+    # 业务说明/数据字典：注入 NL2SQL prompt，帮助 LLM 理解字段业务语义（与宽泛的 description 分离）
+    # 改它不影响 schema 缓存（schema_summary 不含业务说明），无需调 invalidate_schema_cache
+    business_description = models.TextField(
+        blank=True, default='',
+        verbose_name='业务说明',
+        help_text='数据集业务背景/数据字典，注入 NL2SQL prompt 帮助理解字段语义'
+    )
     file = models.FileField(upload_to='datasets/%Y%m/', verbose_name='上传文件')
     file_name = models.CharField(max_length=255, verbose_name='原始文件名')
     file_size = models.BigIntegerField(verbose_name='文件大小(字节)')

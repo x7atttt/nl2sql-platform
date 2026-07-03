@@ -97,6 +97,16 @@
         <el-form-item v-if="fileList.length === 1" label="名称">
           <el-input v-model="uploadName" placeholder="留空则使用文件名" />
         </el-form-item>
+        <el-form-item v-if="fileList.length === 1" label="业务说明">
+          <el-input
+            v-model="uploadBusinessDesc"
+            type="textarea"
+            :rows="3"
+            maxlength="2000"
+            show-word-limit
+            placeholder="可选。填写数据集业务背景/字段含义，会注入 NL2SQL 提示词帮助理解数据语义。例：region=销售大区(east=华东,north=华北)；amount=订单金额(元)"
+          />
+        </el-form-item>
         <el-form-item v-else-if="fileList.length > 1" label=" ">
           <span class="batch-hint">已选 {{ fileList.length }} 个文件，将分别以各自文件名上传</span>
         </el-form-item>
@@ -188,6 +198,7 @@ const sharing = ref(false)
 const showUploadDialog = ref(false)
 const uploading = ref(false)
 const uploadName = ref('')
+const uploadBusinessDesc = ref('')
 const fileList = ref<any[]>([])
 const uploadRef = ref()
 // 活跃的 WebSocket 连接：datasetId → WebSocket（组件卸载时统一关闭）
@@ -255,6 +266,10 @@ async function handleUpload() {
       if (files.length === 1 && uploadName.value) {
         fd.append('name', uploadName.value)
       }
+      // 单文件时附带业务说明（注入 NL2SQL prompt）
+      if (files.length === 1 && uploadBusinessDesc.value.trim()) {
+        fd.append('business_description', uploadBusinessDesc.value)
+      }
       try {
         const res = await datasetApi.upload(fd)
         successCount++
@@ -294,6 +309,7 @@ async function handleUpload() {
       showUploadDialog.value = false
       fileList.value = []
       uploadName.value = ''
+      uploadBusinessDesc.value = ''
       uploadRef.value?.clearFiles()
       fetchList()
     }

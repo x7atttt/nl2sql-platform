@@ -48,6 +48,12 @@ class NL2SQLQueryView(APIView):
         # 记录查询历史（成功查询持久化前 20 行预览，失败留 null）
         is_success = result.get('success', False)
         data = result.get('data', []) if is_success else []
+
+        # 生成问题向量（用于 few-shot 语义检索；失败不阻塞，留 null）
+        # 只有成功的查询才有作为 few-shot 案例的价值，失败的不生成
+        from apps.query.services.embedding import embed_question
+        question_embedding = embed_question(question) if is_success else None
+
         history = QueryHistory.objects.create(
             dataset=dataset,
             user=request.user,
@@ -59,6 +65,7 @@ class NL2SQLQueryView(APIView):
             result_count=len(data),
             result_preview=data[:20] if data else None,
             result_columns=list(data[0].keys()) if data else None,
+            question_embedding=question_embedding,
         )
 
         result['query_id'] = str(history.id)

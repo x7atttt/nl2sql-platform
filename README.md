@@ -11,24 +11,28 @@ Django + Celery + LangChain 构建的自然语言数据查询平台。分析师�
 ## 功能特性
 
 - **数据集管理**：分析师上传 CSV/Excel 文件，异步解析入库，WebSocket 实时推送处理进度；支持批量上传（最多 10 个文件，单个串行处理）；三道规模上限保护（文件 50MB / 行数 10 万 / 列数 100）
-- **自然语言查询**：AI 自动将中文问题转为 SQL 并执行（NL2SQL）
+- **自然语言查询**：AI 自动将中文问题转为 SQL 并执行（NL2SQL），7 步流水线（Schema 发现 → SQL 生成 → 安全校验 → 自动 LIMIT → 执行 → 失败重试 → 结果格式化）
+- **Few-shot 语义检索**：基于 pgvector 把历史成功查询向量化，新问题按余弦相似度检索最相关的 3 条注入 Prompt（HNSW + cosine 索引），替代简单的时间倒序，提升 SQL 生成准确率
+- **业务文档注入**：数据集支持填写业务说明/数据字典，独立段落注入 Prompt，帮助 LLM 理解字段业务语义（列统计告诉它"数据长什么样"，业务说明告诉它"数据是什么意思"）
+- **查询结果可视化**：基于列类型规则引擎自动推荐图表（折线/柱状/饼图/散点/面积），支持切换类型与 X/Y 轴；信任 SQL 语义不二次聚合，明细数据护栏提示
 - **数据分析**：自动统计每列类型、空值、分布、高频值等
 - **查询历史**：持久化前 20 行结果预览，支持一键重跑历史 SQL 获取完整结果
 - **数据导出**：查询结果导出为 CSV / Excel
 - **RBAC 权限**：admin / analyst / viewer 三角色，通过 DatasetShare 分享模型实现数据集级授权，生产者/消费者职责分离
 - **幂等上传**：Redis 分布式锁 + 数据库查重 + 数据库唯一约束，三道防线防重复
-- **Celery 任务可靠性**：指数退避重试 + 死信队列
-- **WebSocket 实时进度**：替代 HTTP 轮询，Celery 任务每处理 1 万行推送一次进度
+- **Celery 任务可靠性**：指数退避重试 + 死信队列，visibility_timeout 显式配置防 acks_late 重复执行
+- **WebSocket 实时进度**：替代 HTTP 轮询，Celery 任务每处理 1 万行推送一次进度；连接鉴权（校验登录 + 数据集可见性）
 - **NL2SQL 安全**：三层 SQL 安全校验（白名单 → 关键字拦截 → 注入拦截）
+- **Schema 发现缓存**：复用 Redis 缓存 schema 摘要（TTL 7 天 + 主动失效），二次查询省 90%+ 计算成本
 
 ## 技术栈
 
 | 层级 | 技术选型 |
 |------|----------|
 | 后端 | Python 3.12, Django 5.1, DRF 3.14, Celery 5.3, Channels |
-| 数据库 | PostgreSQL 15, Redis 7 |
-| AI/LLM | LangChain, 智谱 GLM (OpenAI 兼容 API) |
-| 前端 | Vue 3.4, TypeScript, Element Plus 2.9, Pinia, Vue Router 4, Vite |
+| 数据库 | PostgreSQL 15 + **pgvector**（few-shot 语义检索）, Redis 7 |
+| AI/LLM | LangChain, 智谱 GLM (OpenAI 兼容 API), 智谱 embedding-3（1024 维） |
+| 前端 | Vue 3.4, TypeScript, Element Plus 2.9, **ECharts 5**（查询结果可视化）, Pinia, Vue Router 4, Vite |
 | 部署 | Docker Compose, Nginx, Daphne |
 
 ## 快速开始
@@ -43,6 +47,10 @@ cd AI-driven-data-processing-platform
 # 2. 创建 .env.production 并填入真实值
 cp .env.production .env.production
 # 编辑 DJANGO_SECRET_KEY、DB_PASSWORD、OPENAI_API_KEY、ALLOWED_HOSTS 等
+
+# ⚠️ PostgreSQL 需 pgvector 扩展（few-shot 语义检索依赖）
+#    docker-compose.yml 已用 pgvector/pgvector:pg15 镜像（预装 vector 扩展二进制），
+#    migrate 时会自动 CREATE EXTENSION vector（迁移内置 RunSQL，幂等）
 
 # 3. 构建并启动
 docker compose --env-file .env.production up -d --build
@@ -137,8 +145,8 @@ npm run dev    # http://localhost:5173
 | `/api/users/profile/` | GET | 当前用户信息 | 需登录 |
 | `/api/users/manage/` | GET | 用户列表 | 管理员 |
 | `/api/users/manage/{id}/` | PATCH/DELETE | 改角色 / 禁用 | 管理员 |
-| `/api/datasets/` | GET/POST | 列表 / 上传 | 上传：Analyst+ |
-| `/api/datasets/{id}/` | GET/DELETE | 详情 / 删除 | 删除：Analyst+ |
+| `/api/datasets/` | GET/POST | 列表 / 上传（支持批量） | 上传：Analyst+ |
+| `/api/datasets/{id}/` | GET/PATCH/DELETE | 详情 / 改业务说明 / 删除 | 改/删：Analyst+ |
 | `/api/datasets/{id}/analysis/` | GET | 列统计 | 需登录 |
 | `/api/datasets/{id}/share/` | POST | 分享数据集给指定用户 | Analyst+ |
 | `/api/query/{dataset_id}/` | POST | 自然语言查询 | 需登录 |
@@ -188,8 +196,11 @@ npm run dev    # http://localhost:5173
 - **上传规模上限**：三道规模上限保护——文件 50MB（业务层校验，与 Nginx 对齐）、行数 10 万、列数 100，超限自动清理 dataset 记录
 - **幂等上传**：Redis SETNX 锁 + 数据库 `(owner, file_md5)` 唯一约束
 - **查询历史预览**：持久化前 20 行结果预览（~10KB/条，相比完整结果降低 50 倍存储），支持一键重跑历史 SQL 获取完整结果
-- **Celery 可靠性**：`acks_late=True`、指数退避重试（最多 5 次）、失败入死信队列
+- **Celery 可靠性**：`acks_late=True`、指数退避重试（最多 5 次）、失败入死信队列，`visibility_timeout=12h` 防 acks_late 重复执行
 - **NL2SQL 流水线**：7 步工作流 + 三层 SQL 安全校验，失败自动重试（最多 3 次），自动加 LIMIT 1000，ORDER BY NULLS LAST
+- **Few-shot 语义检索**：pgvector 同库扩展而非独立向量库（ChromaDB）——embedding 与 QueryHistory 同库事务一致，万级以下场景 HNSW 索引 <5ms，零新依赖
+- **Schema 发现 Redis 缓存**：数据集是"上传快照"模式不变则 schema 也不变，TTL 7 天 + 主动失效，二次查询省 90%+ 成本；业务说明独立注入不进缓存（改它不触发 schema 重算）
+- **查询结果可视化选型**：规则引擎按列类型组合自动选图表（日期+数值→折线，文本+数值≤7类→饼图等），信任 SQL 语义不二次聚合，明细数据（行数 >50 且列数 >4）护栏提示
 - **前端主题**：CSS 自定义属性 + Element Plus 变量覆盖，零额外依赖
 
 ## 环境变量
