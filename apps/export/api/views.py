@@ -25,11 +25,14 @@ class ExportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # 权限隔离：admin 可导出任意查询（审计/排查），非 admin 只能导出自己的。
+        # 与 QueryHistoryView 的可见性逻辑对齐（避免 admin 能看历史却不能导出的不一致）
+        if request.user.is_admin:
+            query_qs = QueryHistory.objects.all()
+        else:
+            query_qs = QueryHistory.objects.filter(user=request.user)
         try:
-            query = QueryHistory.objects.get(
-                id=query_id,
-                user=request.user,
-            )
+            query = query_qs.get(id=query_id)
         except QueryHistory.DoesNotExist:
             return Response(
                 {'error': '查询记录不存在'}, status=status.HTTP_404_NOT_FOUND

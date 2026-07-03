@@ -3,6 +3,16 @@ from django.conf import settings
 
 from apps.datasets.models import Dataset
 
+_redis_client: redis.Redis | None = None
+
+
+def _get_redis_client() -> redis.Redis:
+    """全局单例 Redis 客户端（复用连接池，避免每次 new UploadLockService 都新建连接）。"""
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.from_url(settings.REDIS_URL)
+    return _redis_client
+
 
 class UploadLockService:
     """文件上传幂等性服务
@@ -15,14 +25,15 @@ class UploadLockService:
     不同用户可以上传相同文件。
     """
 
+    LOCK_TIMEOUT = 300  # 5分钟过期，防止死锁
+
     def __init__(self):
-        self.redis_client = redis.from_url(settings.REDIS_URL)
-        self.lock_timeout = 300  # 5分钟过期，防止死锁
+        self.redis_client = _get_redis_client()
 
     def try_acquire_lock(self, user_id, file_md5: str) -> bool:
         lock_key = f'upload_lock:{user_id}:{file_md5}'
         acquired = self.redis_client.set(
-            lock_key, '1', nx=True, ex=self.lock_timeout
+            lock_key, '1', nx=True, ex=self.LOCK_TIMEOUT
         )
         return bool(acquired)
 

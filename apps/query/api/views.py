@@ -118,9 +118,13 @@ class QueryRerunView(APIView):
     permission_classes = [IsViewer]
 
     def post(self, request, history_id):
-        # 1. 取历史记录（按 user 隔离，只能重跑自己的）
+        # 1. 取历史记录（admin 可重跑任意历史用于审计，非 admin 只能重跑自己的）
+        if request.user.is_admin:
+            history_qs = QueryHistory.objects.all()
+        else:
+            history_qs = QueryHistory.objects.filter(user=request.user)
         try:
-            history = QueryHistory.objects.get(id=history_id, user=request.user)
+            history = history_qs.get(id=history_id)
         except QueryHistory.DoesNotExist:
             return Response(
                 {'error': '查询记录不存在'},

@@ -17,9 +17,15 @@ MAX_ROWS = 50000
 _SCHEMA_CACHE_TTL = 60 * 60 * 24 * 7  # 7 天兜底（理论上永久，加 TTL 防止意外残留）
 
 
-def _get_cache_client():
-    """惰性创建 Redis 客户端，避免模块加载时连接。"""
-    return redis.from_url(settings.REDIS_URL, decode_responses=True)
+_cache_client: redis.Redis | None = None
+
+
+def _get_cache_client() -> redis.Redis:
+    """全局单例 Redis 客户端（惰性创建，复用连接池，避免每次 from_url 新建连接）。"""
+    global _cache_client
+    if _cache_client is None:
+        _cache_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    return _cache_client
 
 
 def _cache_key(dataset_id) -> str:
@@ -104,12 +110,17 @@ def _classify_columns(df: pd.DataFrame) -> dict:
     return types
 
 
-def get_column_stats(dataset: Dataset) -> dict:
-    """每列统计信息,给前端表格渲染"""
+def get_column_stats(dataset: Dataset, loaded: dict | None = None) -> dict:
+    """每列统计信息,给前端表格渲染。
+
+    可选 loaded 参数：传入已加载的 _load_dataframe 结果，避免与
+    get_dataset_overview 在同一请求里重复加载（50000 行 × 2 次→1 次）。
+    """
     if dataset.status != 'completed':
         return {'columns': [], 'total_rows': 0, 'sampled': False}
 
-    loaded = _load_dataframe(dataset)
+    if loaded is None:
+        loaded = _load_dataframe(dataset)
     df = loaded['df']
     types = loaded['types']
 
@@ -238,8 +249,12 @@ def get_schema_summary(dataset: Dataset) -> str:
     return result
 
 
-def get_dataset_overview(dataset: Dataset) -> dict:
-    """数据集概览"""
+def get_dataset_overview(dataset: Dataset, loaded: dict | None = None) -> dict:
+    """数据集概览。
+
+    可选 loaded 参数：传入已加载的 _load_dataframe 结果，避免与
+    get_column_stats 在同一请求里重复加载（50000 行 × 2 次→1 次）。
+    """
     if dataset.status != 'completed':
         return {
             'row_count': 0,
@@ -249,7 +264,8 @@ def get_dataset_overview(dataset: Dataset) -> dict:
             'sampled': False,
         }
 
-    loaded = _load_dataframe(dataset)
+    if loaded is None:
+        loaded = _load_dataframe(dataset)
     df = loaded['df']
 
     if df.empty:

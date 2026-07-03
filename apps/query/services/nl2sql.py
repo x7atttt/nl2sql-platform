@@ -37,6 +37,63 @@ def _sanitize_for_json(obj):
     return obj
 
 
+# SQL 中是否已有 LIMIT 子句的判断（用正则词边界，避免误判 'PRELIMITED' 等子串）
+_HAS_LIMIT_RE = re.compile(r'\blimit\b\s+\d+', re.IGNORECASE)
+
+
+def execute_select_sql(sql: str, infer_types: bool = False):
+    """执行 SELECT SQL 并返回净化后的结果行。
+
+    NL2SQL 查询 / 重跑 / 导出共用此函数，避免三处重复 cursor+sanitize 实现。
+
+    Args:
+        sql: SELECT SQL（调用方负责安全校验和白名单）
+        infer_types: True 时额外返回列类型映射（number/text/date/boolean），
+                     供前端图表选型。类型在 sanitize 前推断（sanitize 后丢失）。
+
+    Returns:
+        infer_types=False → list[dict]
+        infer_types=True  → (list[dict], dict[col, type])
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        columns = [c[0] for c in cursor.description]
+        rows = cursor.fetchall()
+
+    if infer_types:
+        column_types = _infer_py_types(columns, rows)
+        sanitized = [_sanitize_for_json(dict(zip(columns, row))) for row in rows]
+        return sanitized, column_types
+
+    return [_sanitize_for_json(dict(zip(columns, row))) for row in rows]
+
+
+def _infer_py_types(columns: list, rows: list) -> dict:
+    """从结果行推断每列简化类型：number / text / date / boolean。
+
+    遍历该列直到找到第一个非 None 值判断类型（首行可能为空）。
+    模块级函数，供 execute_select_sql 和 NL2SQLService 共用。
+    """
+    type_map = {}
+    for col_idx, col_name in enumerate(columns):
+        resolved = 'text'  # 兜底（空列或全 None）
+        for row in rows:
+            val = row[col_idx]
+            if val is None:
+                continue
+            if isinstance(val, bool):
+                resolved = 'boolean'
+            elif isinstance(val, (int, float, Decimal)):
+                resolved = 'number'
+            elif isinstance(val, (datetime, date)):
+                resolved = 'date'
+            else:
+                resolved = 'text'
+            break
+        type_map[col_name] = resolved
+    return type_map
+
+
 # ===== Prompt 模板化管理 =====
 
 SQL_GENERATE_SYSTEM = Template("""你是一个专业的SQL生成助手。根据以下信息生成PostgreSQL SQL查询。
@@ -224,46 +281,11 @@ class NL2SQLService:
     def _execute_sql(self, sql: str) -> tuple:
         """执行 SQL，返回 (净化后的 rows, 列类型映射)。
 
+        复用模块级 execute_select_sql（与导出/重跑共用执行逻辑）。
         列类型在 sanitize 前推断——_sanitize_for_json 会把 Decimal→float、
         datetime→ISO 字符串，类型信息丢失后再推断不准。
         """
-        with connection.cursor() as cursor:
-            cursor.execute(sql)
-            columns = [col[0] for col in cursor.description]
-            rows = cursor.fetchall()
-        # 在 sanitize 前用实际 Python 类型推断（比 PG OID 映射简单可靠）
-        column_types = self._infer_column_types(columns, rows)
-        # 净化 Decimal/datetime 等非 JSON 类型，保证存 JSONField 和 HTTP Response 都安全
-        sanitized = [_sanitize_for_json(dict(zip(columns, row))) for row in rows]
-        return sanitized, column_types
-
-    @staticmethod
-    def _infer_column_types(columns: list, rows: list) -> dict:
-        """从结果行推断每列简化类型：number / text / date / boolean。
-
-        遍历该列直到找到第一个非 None 值判断类型（首行可能为空）。
-        前端图表选型按这四种类型决定维度列 vs 度量列。
-        """
-        from decimal import Decimal
-        from datetime import datetime, date
-        type_map = {}
-        for col_idx, col_name in enumerate(columns):
-            resolved = 'text'  # 兜底（空列或全 None）
-            for row in rows:
-                val = row[col_idx]
-                if val is None:
-                    continue
-                if isinstance(val, bool):
-                    resolved = 'boolean'
-                elif isinstance(val, (int, float, Decimal)):
-                    resolved = 'number'
-                elif isinstance(val, (datetime, date)):
-                    resolved = 'date'
-                else:
-                    resolved = 'text'
-                break
-            type_map[col_name] = resolved
-        return type_map
+        return execute_select_sql(sql, infer_types=True)
 
     # ===== 主流程 =====
 

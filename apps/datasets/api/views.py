@@ -137,11 +137,13 @@ class DatasetViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         from apps.datasets.services.analyzer import (
-            get_dataset_overview, get_column_stats,
+            get_dataset_overview, get_column_stats, _load_dataframe,
         )
+        # 一次加载，overview 和 column_stats 共享（避免 50000 行加载 2 次）
+        loaded = _load_dataframe(dataset)
         return Response({
-            'overview': get_dataset_overview(dataset),
-            'column_stats': get_column_stats(dataset),
+            'overview': get_dataset_overview(dataset, loaded=loaded),
+            'column_stats': get_column_stats(dataset, loaded=loaded),
         })
 
     @action(detail=True, methods=['post'], url_path='share')
