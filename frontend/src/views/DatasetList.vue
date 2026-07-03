@@ -167,9 +167,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, h } from 'vue'
 import { useRouter } from 'vue-router'
-import { Upload, Share, Delete } from '@element-plus/icons-vue'
+import { Upload, Share, Delete, Document, WarningFilled } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { datasetApi, createProgressSocket } from '../api/dataset'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -392,17 +392,38 @@ async function handleBatchDelete() {
   if (selectedIds.value.length === 0) return
   // 拷贝选中行（弹窗展示名称用，循环删时原数组可能变化）
   const rows = [...selectedRows.value]
-  // 列出数据集名称，超过 5 个折叠显示
   const names = rows.map((r: any) => r.name)
-  const preview = names.length <= 5
-    ? names.map((n: string) => `• ${n}`).join('\n')
-    : names.slice(0, 5).map((n: string) => `• ${n}`).join('\n') + `\n• ... 等 ${names.length} 个`
+  // 列表展示：前 5 个 + 折叠提示
+  const visibleNames = names.slice(0, 5)
+  const hiddenCount = Math.max(0, names.length - 5)
+
   try {
-    await ElMessageBox.confirm(
-      `确定删除以下 ${rows.length} 个数据集？\n\n${preview}\n\n删除后数据行、分享记录、查询历史将一并清除，无法恢复。`,
-      '批量删除确认',
-      { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' },
-    )
+    await ElMessageBox({
+      title: '批量删除数据集',
+      type: 'warning',
+      customClass: 'batch-delete-dialog',
+      confirmButtonText: `删除 ${names.length} 项`,
+      confirmButtonClass: 'el-button--danger',
+      cancelButtonText: '取消',
+      message: h('div', { class: 'batch-delete-content' }, [
+        h('p', { class: 'bd-desc' }, `即将删除以下 ${names.length} 个数据集：`),
+        h('div', { class: 'bd-list' }, [
+          ...visibleNames.map((n: string) =>
+            h('div', { class: 'bd-item' }, [
+              h('el-icon', { class: 'bd-item-icon' }, [h(Document)]),
+              h('span', { class: 'bd-item-name' }, n),
+            ]),
+          ),
+          hiddenCount > 0
+            ? h('div', { class: 'bd-more' }, `…还有 ${hiddenCount} 项`)
+            : null,
+        ]),
+        h('div', { class: 'bd-warn' }, [
+          h('el-icon', { class: 'bd-warn-icon' }, [h(WarningFilled)]),
+          h('span', '删除后数据行、分享记录、查询历史将一并清除，无法恢复。'),
+        ]),
+      ]),
+    })
   } catch {
     return  // 用户取消
   }
@@ -545,5 +566,74 @@ function formatTime(t: string) {
 .batch-hint {
   color: var(--el-text-color-secondary);
   font-size: 13px;
+}
+</style>
+
+<!-- 非 scoped：ElMessageBox 渲染到 body teleport，scoped 样式作用不到 -->
+<style>
+.batch-delete-content {
+  max-width: 460px;
+}
+.batch-delete-content .bd-desc {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+}
+/* 数据集列表卡片 */
+.batch-delete-content .bd-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  padding: 6px;
+  background: var(--el-fill-color-light);
+}
+.batch-delete-content .bd-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.batch-delete-content .bd-item:hover {
+  background: var(--el-fill-color);
+}
+.batch-delete-content .bd-item-icon {
+  color: var(--el-text-color-secondary);
+  flex-shrink: 0;
+}
+.batch-delete-content .bd-item-name {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.batch-delete-content .bd-more {
+  padding: 8px 10px 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
+  font-style: italic;
+}
+/* 危险提示条 */
+.batch-delete-content .bd-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: var(--el-color-danger-light-9);
+  border-left: 3px solid var(--el-color-danger);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--el-color-danger-dark-2);
+  line-height: 1.5;
+}
+.batch-delete-content .bd-warn-icon {
+  flex-shrink: 0;
+  font-size: 15px;
+  margin-top: 1px;
 }
 </style>
