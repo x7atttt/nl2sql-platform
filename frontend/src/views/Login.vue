@@ -10,7 +10,10 @@
         <el-input v-model="form.password" type="password" placeholder="密码" :prefix-icon="Lock" size="large" show-password />
       </el-form-item>
       <el-form-item>
-        <el-button type="primary" size="large" :loading="loading" native-type="submit">登录</el-button>
+        <SliderCaptcha ref="captchaRef" @verified="captchaVerified = true" />
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" size="large" :loading="loading" :disabled="!captchaVerified" native-type="submit">登录</el-button>
       </el-form-item>
     </el-form>
     <div class="link-row">
@@ -27,11 +30,14 @@ import { useUserStore } from '../stores/user'
 import { userApi } from '../api/user'
 import { ElMessage } from 'element-plus'
 import AuthLayout from '../components/AuthLayout.vue'
+import SliderCaptcha from '../components/SliderCaptcha.vue'
 
 const router = useRouter()
 const store = useUserStore()
 const loading = ref(false)
 const form = ref({ username: '', password: '' })
+const captchaVerified = ref(false)
+const captchaRef = ref<InstanceType<typeof SliderCaptcha>>()
 
 async function handleLogin() {
   if (!form.value.username || !form.value.password) {
@@ -44,6 +50,10 @@ async function handleLogin() {
     store.setUser(res.data)
     ElMessage.success('登录成功')
     router.push({ name: 'dashboard' })
+  } catch {
+    // 登录失败：重置验证码，强制重新滑块（防暴力破解）
+    captchaVerified.value = false
+    captchaRef.value?.reset()
   } finally {
     loading.value = false
   }

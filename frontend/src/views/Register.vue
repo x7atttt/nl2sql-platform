@@ -16,7 +16,10 @@
         <el-input v-model="form.confirmPassword" type="password" placeholder="确认密码" :prefix-icon="Lock" size="large" show-password />
       </el-form-item>
       <el-form-item>
-        <el-button type="primary" size="large" :loading="loading" native-type="submit">注册</el-button>
+        <SliderCaptcha ref="captchaRef" @verified="captchaVerified = true" />
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" size="large" :loading="loading" :disabled="!captchaVerified" native-type="submit">注册</el-button>
       </el-form-item>
     </el-form>
     <div class="link-row">
@@ -32,10 +35,13 @@ import { User, Lock, Message } from '@element-plus/icons-vue'
 import { userApi } from '../api/user'
 import { ElMessage } from 'element-plus'
 import AuthLayout from '../components/AuthLayout.vue'
+import SliderCaptcha from '../components/SliderCaptcha.vue'
 
 const router = useRouter()
 const loading = ref(false)
 const form = ref({ username: '', email: '', password: '', confirmPassword: '' })
+const captchaVerified = ref(false)
+const captchaRef = ref<InstanceType<typeof SliderCaptcha>>()
 
 async function handleRegister() {
   if (!form.value.username || !form.value.password || !form.value.email) {
@@ -55,6 +61,9 @@ async function handleRegister() {
     })
     ElMessage.success('注册成功，请登录')
     router.push({ name: 'login' })
+  } catch {
+    captchaVerified.value = false
+    captchaRef.value?.reset()
   } finally {
     loading.value = false
   }
