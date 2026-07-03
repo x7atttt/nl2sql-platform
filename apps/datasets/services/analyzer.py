@@ -10,6 +10,18 @@ from apps.datasets.models import Dataset, DataRow
 logger = logging.getLogger(__name__)
 
 MAX_ROWS = 50000
+_TOP_VALUE_MAX_LEN = 50  # 高频值展示截断长度（URL/长描述等单值可达数千字符）
+
+
+def _truncate_value(val: str, max_len: int = _TOP_VALUE_MAX_LEN) -> str:
+    """截断超长高频值，前端表格展示用。
+
+    URL/长描述/嵌套 JSON 等单值最长可达数千字符，原样返回会撑爆表格单元格。
+    截断后加省略号标记，前端 tooltip 仍可展示完整值的"前缀"足够区分。
+    """
+    if len(val) <= max_len:
+        return val
+    return val[:max_len] + '...'
 
 # schema 缓存：项目是"上传快照"模式，数据集不变则 schema 也不变。
 # 用现有 Redis 连接（复用 db1，不分库），按 key 前缀 schema:{dataset_id} 逻辑隔离。
@@ -149,8 +161,10 @@ def get_column_stats(dataset: Dataset, loaded: dict | None = None) -> dict:
                 stats['median'] = round(float(clean.median()), 2)
         elif col_type in ('text', 'boolean'):
             top = series.value_counts().head(10)
+            # 超长值截断（如 URL/长描述，单值最长可达数千字符，前端表格塞不下）
             stats['top_values'] = [
-                {'value': str(v), 'count': int(c)} for v, c in top.items()
+                {'value': _truncate_value(str(v)), 'count': int(c)}
+                for v, c in top.items()
             ]
 
         columns.append({
@@ -222,7 +236,8 @@ def get_schema_summary(dataset: Dataset) -> str:
             lines.append(f'  - {col} ({col_type}): {", ".join(parts)}')
         else:
             top_vals = series.dropna().value_counts().head(5)
-            top_str = ', '.join(str(v) for v in top_vals.index)
+            # 截断超长值（URL/长描述塞进 prompt 既费 token 又干扰 LLM）
+            top_str = ', '.join(_truncate_value(str(v)) for v in top_vals.index)
             lines.append(
                 f'  - {col} ({col_type}): {distinct_count} distinct, top: {top_str}'
             )

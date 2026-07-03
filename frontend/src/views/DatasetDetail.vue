@@ -68,9 +68,9 @@
             <el-table-column label="中位数" width="90">
               <template #default="{ row }">{{ row.median ?? '-' }}</template>
             </el-table-column>
-            <el-table-column label="高频值" min-width="200">
+            <el-table-column label="高频值" min-width="200" show-overflow-tooltip>
               <template #default="{ row }">
-                <span v-if="row.top_values">
+                <span v-if="row.top_values" class="top-values">
                   {{ row.top_values.slice(0, 5).map((v: any) => `${v.value}(${v.count})`).join(', ') }}
                 </span>
                 <span v-else>-</span>
@@ -463,6 +463,16 @@ function formatSize(bytes: number) {
   margin-bottom: 12px;
   color: var(--brand-text-primary);
   font-weight: 600;
+}
+
+/* 高频值单元格：内容超长时省略，配合 el-table show-overflow-tooltip 悬浮查看 */
+.top-values {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .query-workspace {
