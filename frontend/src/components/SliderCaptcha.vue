@@ -119,13 +119,18 @@ function onEnd() {
 
 /**
  * 反机器人轨迹检测：
- * 1. 总耗时 < 300ms → 机器（人不可能这么快拖到头）
- * 2. 速度方差过小 → 机器（人拖动有快慢波动，机器人匀速）
+ * 1. 总耗时 < 120ms → 机器（人再快也到不了，机器瞬移是 < 50ms 零采样点）
+ * 2. 采样点 < 4 → 机器（mousemove 正常拖动会触发多次，瞬移/setInterval 模拟才稀疏）
+ * 3. 速度方差 ≈ 0 → 机器（完全匀速是机器特征，人即便快速匀速拖也有微小波动）
+ *
+ * 注意：纯前端滑块（无后端图片缺口校验）作用是"增加机器人成本"，
+ * 阈值不能卡正常用户。快速拖动 ≠ 机器人——熟练用户/触屏甩动 200ms 内
+ * 完成很常见，之前的 300ms + 方差 0.5 阈值会误杀快速正常用户。
  */
 function isBotTrace(t: Array<{ x: number; t: number }>): boolean {
-  if (t.length < 3) return true   // 采样点太少，可疑
+  if (t.length < 4) return true    // 采样点太少（瞬移/直接 setLeft 无中间点）
   const duration = t[t.length - 1].t - t[0].t
-  if (duration < 300) return true // 瞬移，机器特征
+  if (duration < 120) return true  // 瞬移，机器特征（人再快也 > 120ms）
 
   // 计算相邻点速度，再看方差
   const speeds: number[] = []
@@ -136,8 +141,8 @@ function isBotTrace(t: Array<{ x: number; t: number }>): boolean {
   }
   const mean = speeds.reduce((a, b) => a + b, 0) / speeds.length
   const variance = speeds.reduce((a, b) => a + (b - mean) ** 2, 0) / speeds.length
-  // 匀速拖动（方差极小）判机器。阈值 0.5 是经验值，人正常拖动方差 > 1
-  return variance < 0.5
+  // 完全匀速（方差≈0）判机器。阈值 0.05：人即便快速匀速拖，微观也有抖动
+  return variance < 0.05
 }
 
 function fail() {
