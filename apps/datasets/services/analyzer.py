@@ -235,17 +235,32 @@ def get_schema_summary(dataset: Dataset) -> str:
             parts = [f'{v}={int(c)}' for v, c in top.items()]
             lines.append(f'  - {col} ({col_type}): {", ".join(parts)}')
         else:
-            top_vals = series.dropna().value_counts().head(5)
-            # 截断超长值（URL/长描述塞进 prompt 既费 token 又干扰 LLM）
-            top_str = ', '.join(_truncate_value(str(v)) for v in top_vals.index)
-            lines.append(
-                f'  - {col} ({col_type}): {distinct_count} distinct, top: {top_str}'
-            )
+            # 文本列：高基数列（distinct 接近总行数，如 url/image_urls/description，
+            # 每行都不同）不注入 top 5——这些列的 top 5 是随机的 5 个长 URL/描述，
+            # 对 SQL 生成零价值，却让 schema_summary 膨胀到 13K+ 字符拖慢 LLM。
+            total = len(series)
+            is_high_cardinality = total > 0 and distinct_count / total >= 0.9
+            if is_high_cardinality:
+                lines.append(
+                    f'  - {col} ({col_type}): {distinct_count} distinct'
+                )
+            else:
+                top_vals = series.dropna().value_counts().head(5)
+                # 截断超长值（URL/长描述塞进 prompt 既费 token 又干扰 LLM）
+                top_str = ', '.join(_truncate_value(str(v)) for v in top_vals.index)
+                lines.append(
+                    f'  - {col} ({col_type}): {distinct_count} distinct, top: {top_str}'
+                )
 
     lines.append('')
     lines.append('Sample rows:')
+    # 截断每行 JSON 长度：电商等数据集每行可能含 url/image_urls 等长字段，
+    # 3 行完整 JSON 可达数 KB，截断到 300 字符避免 prompt 膨胀
     for _, row in df.head(3).iterrows():
-        lines.append('  ' + json.dumps(row.to_dict(), ensure_ascii=False, default=str))
+        row_json = json.dumps(row.to_dict(), ensure_ascii=False, default=str)
+        if len(row_json) > 300:
+            row_json = row_json[:300] + '...'
+        lines.append('  ' + row_json)
 
     if loaded['sampled']:
         lines.append('')
