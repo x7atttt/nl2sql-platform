@@ -1,7 +1,8 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import ElementPlus from 'element-plus'
+import 'element-plus/dist/index.css'
 import './styles/variables.css'
-// element-plus 样式覆盖（组件本体样式由 unplugin-vue-components 按需注入）
 import './styles/element-overrides.css'
 // 图标全量注册（图标库体积小 ~50KB，且模板里按名引用无法静态分析，保留全局注册）
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
@@ -19,4 +20,5 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 
 app.use(createPinia())
 app.use(router)
+app.use(ElementPlus)
 app.mount('#app')

@@ -1,19 +1,8 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import AutoImport from 'unplugin-auto-import/vite'
-import Components from 'unplugin-vue-components/vite'
-import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 export default defineConfig({
-  plugins: [
-    vue(),
-    // Element Plus 按需引入：
-    // 1) AutoImport：自动引入 ElMessage/ElMessageBox 等命令式 API
-    // 2) Components：模板里用到的 <el-xxx> 自动按需引入对应组件
-    // 效果：element-plus 从全量 989KB chunk → 按页面用到的组件 tree-shake
-    AutoImport({ resolvers: [ElementPlusResolver()] }),
-    Components({ resolvers: [ElementPlusResolver()] }),
-  ],
+  plugins: [vue()],
   server: {
     port: 5173,
     proxy: {
@@ -38,11 +27,14 @@ export default defineConfig({
         manualChunks: {
           // Vue 核心：vue + vue-router + pinia（几乎不变，长期缓存）
           'vue-vendor': ['vue', 'vue-router', 'pinia'],
+          // Element Plus：全量引入（按需引入会漏掉 TabNavRenderer 等深层组件
+          // 导致 el-tabs 渲染崩溃），独立 chunk 长期缓存抵消体积
+          'element-plus': ['element-plus'],
           // ECharts + vue-echarts：只在 DatasetDetail 用，独立 chunk 按需加载
           echarts: ['echarts', 'vue-echarts'],
         },
       },
     },
-    chunkSizeWarningLimit: 600,
+    chunkSizeWarningLimit: 1000,
   },
 })
