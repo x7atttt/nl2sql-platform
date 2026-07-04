@@ -27,14 +27,18 @@ class DatasetViewSet(viewsets.ModelViewSet):
         return [IsViewer()]
 
     def get_queryset(self):
+        from django.db.models import Q
         user = self.request.user
         if user.is_admin:
             # admin 看全部（管理需要）
             return Dataset.objects.all().order_by('-created_at')
         if user.is_analyst:
-            # analyst 只看自己上传的
-            return Dataset.objects.filter(owner=user).order_by('-created_at')
-        # viewer：只看被分享给自己的（核心修复 viewer 死锁）
+            # analyst：自己 owner 的 + 被分享给自己的（与 get_accessible_dataset 口径一致）
+            # 之前只认 owner，导致 analyst 被分享的数据集列表看不到但能查（口径不一致）
+            return Dataset.objects.filter(
+                Q(owner=user) | Q(shares__shared_to=user)
+            ).distinct().order_by('-created_at')
+        # viewer：只看被分享给自己的（严格隔离，不含 owner）
         return Dataset.objects.filter(
             shares__shared_to=user
         ).distinct().order_by('-created_at')
