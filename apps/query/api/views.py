@@ -244,3 +244,18 @@ class ChartSuggestView(APIView):
             'success': True,
             'suggestion': suggestion,
         })
+
+
+class DashboardStatsView(APIView):
+    """Dashboard BI 概览聚合接口。
+
+    GET /api/dashboard/stats/ —— 一次返回查询趋势（30 天）+ 数据集健康度 + 汇总卡片。
+    权限分层对标 Power BI workspace 角色模型：
+    admin 看全平台运营视角，analyst/viewer 看个人视角（详见 dashboard.py）。
+    """
+    permission_classes = [IsViewer]
+
+    def get(self, request):
+        from apps.query.services.dashboard import get_dashboard_stats
+        stats = get_dashboard_stats(request.user)
+        return Response(stats)
