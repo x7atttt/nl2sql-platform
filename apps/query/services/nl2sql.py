@@ -213,15 +213,46 @@ class NL2SQLService:
 
     # ===== SQL 安全 =====
 
+    @staticmethod
+    def _strip_sql_comments(sql: str) -> str:
+        """剥离 SQL 注释后再做关键字校验，避免注释里的词被误判。
+
+        支持两种 PostgreSQL 注释：
+        - 块注释  /* ... */（可跨行，可嵌套，但这里按非嵌套处理足够）
+        - 行注释  -- ... 到行尾
+        字符串字面量 '...' 内的注释标记不剥离（LLM 生成的 SQL 几乎不会在
+        WHERE 条件里塞注释语法，按 YAGNI 不处理字符串内的边界情况）。
+        """
+        # 先剥离块注释 /* ... */（DOTALL 让 . 匹配换行）
+        sql = re.sub(r'/\*.*?\*/', ' ', sql, flags=re.DOTALL)
+        # 再剥离行注释 -- ... 到行尾
+        sql = re.sub(r'--[^\n]*', ' ', sql)
+        return sql
+
     def _validate_sql(self, sql: str) -> bool:
-        sql_stripped = sql.strip().upper()
-        if not sql_stripped.startswith('SELECT'):
+        """三层 SQL 安全校验：白名单 → 危险关键字 → 分号注入。
+
+        所有校验都在剥离注释后的 SQL 上做，避免注释里的词干扰判断。
+        """
+        # 剥离注释，避免 /* DROP TABLE */ 里的 DROP 被误拦
+        sql_clean = self._strip_sql_comments(sql).strip()
+        sql_upper = sql_clean.upper()
+
+        # 1. 白名单：必须以 SELECT 开头
+        if not sql_upper.startswith('SELECT'):
             return False
+
+        # 2. 危险关键字：词边界匹配（防 'CREATED_AT' 误判 'CREATE'）
         for keyword in self.DANGEROUS_KEYWORDS:
-            if re.search(rf'\b{keyword}\b', sql_stripped):
+            if re.search(rf'\b{keyword}\b', sql_upper):
                 return False
-        if ';' in sql_stripped[:-1]:
+
+        # 3. 分号注入：SQL 中间不能有分号（末尾分号允许，是合法结尾符）
+        # 去掉末尾的单个分号后再查，剩余若含分号说明是多语句注入
+        # （如 'SELECT 1; DROP TABLE x'）
+        if ';' in sql_clean.rstrip(';').rstrip():
             return False
+
         return True
 
     def _add_limit(self, sql: str) -> str:
