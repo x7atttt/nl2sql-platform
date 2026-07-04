@@ -1,14 +1,27 @@
+# syntax=docker/dockerfile:1.7
+# 启用 BuildKit，支持 --mount=type=cache 持久化 pnpm store，二次构建复用下载
+
 FROM node:22-alpine AS build
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm config set registry https://registry.npmmirror.com && npm install --legacy-peer-deps
+# 启用 corepack（Node 22 自带，预装 pnpm）
+RUN corepack enable
+
+# 先复制 lockfile 和 package.json（独立 layer，依赖不变则缓存命中）
+COPY package.json pnpm-lock.yaml ./
+
+# pnpm install --frozen-lockfile 严格按 lockfile 安装（可复现，避免依赖漂移）
+# --mount=type=cache 持久化 pnpm store，二次构建复用下载
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-peer-deps --frozen-lockfile
 
 COPY . .
-# 跳过 vue-tsc 类型检查（本地开发时已检查），直接 vite build
-# 2核服务器 vue-tsc 要 4-5 分钟且长时间无输出，vite build 只要 1-2 分钟
-RUN npx vite build
+
+# vite build：NODE_OPTIONS 限制内存 1.5G 防止 2G 服务器 OOM
+# 跳过 vue-tsc 类型检查（本地开发时已检查，CI/生产构建跳过省时间）
+ENV NODE_OPTIONS=--max-old-space-size=1536
+RUN pnpm run build
 
 FROM nginx:alpine
 

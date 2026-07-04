@@ -1,11 +1,15 @@
-# 部署命令: docker-compose --env-file .env.production up -d --build
+# 生产部署：docker compose --env-file .env.production up -d
+# 本地开发：docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+#
+# 镜像地址走环境变量（ACR_VPC_DOMAIN / ACR_NAMESPACE），仓库里不暴露 ACR 真实域名。
+# 在 .env.production 配置：ACR_VPC_DOMAIN、ACR_NAMESPACE
 services:
   django:
     restart: unless-stopped
-    build: .
+    image: ${ACR_VPC_DOMAIN}/${ACR_NAMESPACE}:backend-latest
+    # collectstatic 已移到构建期（Dockerfile），启动只跑 migrate
     command: >
       sh -c "python manage.py migrate --noinput &&
-             python manage.py collectstatic --noinput &&
              daphne -b 0.0.0.0 -p 8000 config.asgi:application"
     volumes:
       - static_data:/app/staticfiles
@@ -22,7 +26,7 @@ services:
 
   celery-worker:
     restart: unless-stopped
-    build: .
+    image: ${ACR_VPC_DOMAIN}/${ACR_NAMESPACE}:backend-latest
     command: celery -A config worker -l info --concurrency=2 --max-tasks-per-child=100
     volumes:
       - media_data:/app/media
@@ -36,19 +40,19 @@ services:
 
   celery-beat:
     restart: unless-stopped
-    build: .
+    image: ${ACR_VPC_DOMAIN}/${ACR_NAMESPACE}:backend-latest
     command: celery -A config beat -l info
     env_file:
       - .env.production
     depends_on:
+      django:           # 修复：beat 依赖 django_celery_beat 迁移表，需等 django migrate 完成
+        condition: service_started
       redis:
         condition: service_healthy
 
   nginx:
     restart: unless-stopped
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: ${ACR_VPC_DOMAIN}/${ACR_NAMESPACE}:frontend-latest
     ports:
       - "80:80"
     volumes:
