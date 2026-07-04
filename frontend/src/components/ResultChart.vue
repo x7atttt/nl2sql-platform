@@ -191,6 +191,12 @@ const displayData = computed(() => {
   return props.data
 })
 
+/** 格式化维度值：null/undefined/空字符串 → 可读标签，避免图表显示无名扇区/空白轴 */
+function formatDimValue(val: unknown): string {
+  if (val === null || val === undefined || val === '') return '（空值）'
+  return String(val)
+}
+
 // ECharts option 派生
 const chartOption = computed(() => {
   const type = currentType.value
@@ -211,7 +217,7 @@ const chartOption = computed(() => {
 
 function buildCartesianOption(type: 'bar' | 'line' | 'area', x: string, ys: string[]) {
   const data = displayData.value
-  const xData = x ? data.map((r) => String(r[x] ?? '')) : data.map((_, i) => `#${i + 1}`)
+  const xData = x ? data.map((r) => formatDimValue(r[x])) : data.map((_, i) => `#${i + 1}`)
   const series = ys.map((y) => ({
     name: y,
     type: type === 'area' ? 'line' : type,
@@ -245,7 +251,7 @@ function buildPieOption(x: string, y: string) {
         type: 'pie',
         radius: ['40%', '70%'],
         center: ['40%', '50%'],
-        data: data.map((r) => ({ name: x ? String(r[x] ?? '') : '', value: Number(r[y]) || 0 })),
+        data: data.map((r) => ({ name: x ? formatDimValue(r[x]) : '', value: Number(r[y]) || 0 })),
         emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0,0,0,0.5)' } },
       },
     ],
@@ -257,7 +263,10 @@ function buildScatterOption(x: string, y: string) {
   // 散点图：x 必须是数值（如果用户选了文本列作 x，自动用索引）
   const pts = data.map((r) => [x ? Number(r[x]) || 0 : 0, Number(r[y]) || 0])
   return {
-    tooltip: { trigger: 'item' },
+    tooltip: {
+      trigger: 'item',
+      formatter: (p: any) => `${formatDimValue(data[p.dataIndex]?.[x])}: ${p.value[1]}`,
+    },
     xAxis: { type: 'value', name: x || 'X' },
     yAxis: { type: 'value', name: y },
     series: [{ type: 'scatter', data: pts, symbolSize: 8 }],
