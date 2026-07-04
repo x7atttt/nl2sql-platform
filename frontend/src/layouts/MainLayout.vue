@@ -2,7 +2,7 @@
   <el-container class="main-layout">
     <el-aside :width="isCollapse ? '64px' : '200px'" class="sidebar">
       <div class="logo">
-        <span class="logo-icon">◈</span>
+        <span class="logo-icon"><el-icon><DataAnalysis /></el-icon></span>
         <span v-show="!isCollapse" class="logo-text">AI 数据分析</span>
       </div>
       <el-menu
@@ -27,7 +27,6 @@
           <template #title>用户管理</template>
         </el-menu-item>
       </el-menu>
-      <div class="sidebar-gradient"></div>
     </el-aside>
 
     <el-container>
@@ -115,6 +114,7 @@ async function handleLogout() {
 
 .sidebar {
   background-color: var(--brand-sidebar-bg);
+  border-right: 1px solid var(--brand-sidebar-border);
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
   display: flex;
@@ -127,31 +127,30 @@ async function handleLogout() {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  color: var(--brand-sidebar-text-active);
-  font-size: 18px;
-  font-weight: 600;
+  gap: 10px;
+  color: var(--brand-text-primary);
+  font-size: 17px;
+  font-weight: 700;
   border-bottom: 1px solid var(--brand-sidebar-border);
   flex-shrink: 0;
+  letter-spacing: -0.01em;
 }
 
 .logo-icon {
-  font-size: 22px;
-  color: var(--brand-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--brand-primary), var(--brand-primary-light-3));
+  color: #ffffff;
+  font-size: 18px;
+  box-shadow: var(--brand-shadow-primary);
 }
 
 .logo-text {
   white-space: nowrap;
-}
-
-.sidebar-gradient {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 80px;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.15), transparent);
-  pointer-events: none;
 }
 
 .el-menu {
@@ -162,24 +161,30 @@ async function handleLogout() {
   --el-menu-active-color: var(--brand-sidebar-text-active);
   --el-menu-hover-bg-color: var(--brand-sidebar-hover);
   flex: 1;
+  padding: var(--space-sm);
 }
 
 :deep(.el-menu-item) {
   color: var(--brand-sidebar-text);
   border-left: 3px solid transparent;
+  border-radius: var(--brand-radius-md);
+  margin: 2px 0;
   transition: all 0.2s ease;
   white-space: nowrap;
+  height: 44px;
+  line-height: 44px;
 }
 
 :deep(.el-menu-item:hover) {
   background-color: var(--brand-sidebar-hover) !important;
-  color: var(--brand-sidebar-text-active);
+  color: var(--brand-text-primary);
 }
 
 :deep(.el-menu-item.is-active) {
   background-color: var(--brand-sidebar-active) !important;
   color: var(--brand-sidebar-text-active) !important;
-  border-left-color: var(--brand-accent);
+  border-left-color: var(--brand-primary);
+  font-weight: 600;
 }
 
 .top-bar {
@@ -222,16 +227,17 @@ async function handleLogout() {
 }
 
 .user-avatar {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--brand-accent), var(--el-color-primary-dark-2));
+  background: linear-gradient(135deg, var(--brand-primary), var(--brand-primary-light-3));
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 13px;
   font-weight: 600;
+  box-shadow: var(--brand-shadow-sm);
 }
 
 .role-tag {

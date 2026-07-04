@@ -194,13 +194,13 @@ defineExpose({
   left: 0;
   top: 0;
   height: 100%;
-  background: linear-gradient(90deg, #409eff 0%, #67c23a 100%);
+  background: linear-gradient(90deg, var(--brand-primary) 0%, var(--brand-success) 100%);
   transition: width 0.1s ease;
 }
 
 /* 失败时进度条变红 */
 .slider-captcha.shaking .slider-fill {
-  background: #f56c6c;
+  background: var(--brand-danger);
 }
 
 .slider-tip {
@@ -209,7 +209,7 @@ defineExpose({
   left: 50%;
   transform: translate(-50%, -50%);
   font-size: 13px;
-  color: #909399;
+  color: var(--brand-text-tertiary);
   pointer-events: none;
   white-space: nowrap;
 }
@@ -245,8 +245,8 @@ defineExpose({
 }
 
 .slider-thumb.verified {
-  background: #67c23a;
-  border-color: #67c23a;
+  background: var(--brand-success);
+  border-color: var(--brand-success);
   color: #fff;
   cursor: default;
 }

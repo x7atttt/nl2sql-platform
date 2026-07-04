@@ -58,13 +58,13 @@ const queryCount = ref(0)
 const recentDatasets = ref<any[]>([])
 
 const statCards = computed(() => [
-  { label: '数据集总数', value: datasetCount.value, icon: FolderOpened, color: '#3a8fd4' },
-  { label: '查询记录数', value: queryCount.value, icon: DataAnalysis, color: '#2ecc71' },
+  { label: '数据集总数', value: datasetCount.value, icon: FolderOpened, color: '#4f46e5' },
+  { label: '查询记录数', value: queryCount.value, icon: DataAnalysis, color: '#10b981' },
   {
     label: '当前角色',
     value: store.user?.role === 'admin' ? '管理员' : store.user?.role === 'analyst' ? '分析师' : '只读用户',
     icon: User,
-    color: '#e6a23c',
+    color: '#f59e0b',
   },
 ])
 
