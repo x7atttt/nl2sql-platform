@@ -12,9 +12,10 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml ./
 
 # pnpm install --frozen-lockfile 严格按 lockfile 安装（可复现，避免依赖漂移）
+# 注：peer deps 由 lockfile 的 settings.autoInstallPeers=true 控制，不需要额外参数
 # --mount=type=cache 持久化 pnpm store，二次构建复用下载
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-peer-deps --frozen-lockfile
+    pnpm install --frozen-lockfile
 
 COPY . .
 
