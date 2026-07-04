@@ -20,9 +20,9 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 COPY . .
 
 # vite build：NODE_OPTIONS 限制内存 1.5G 防止 2G 服务器 OOM
-# 跳过 vue-tsc 类型检查（本地开发时已检查，CI/生产构建跳过省时间）
+# 直接调 vite build 跳过 vue-tsc 类型检查（本地开发时已检查，CI 省时间）
 ENV NODE_OPTIONS=--max-old-space-size=1536
-RUN pnpm run build
+RUN pnpm exec vite build
 
 FROM nginx:alpine
 
