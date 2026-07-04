@@ -1,10 +1,6 @@
 <template>
   <div class="auth-page">
-    <div class="auth-bg-shapes">
-      <div class="shape shape-1"></div>
-      <div class="shape shape-2"></div>
-      <div class="shape shape-3"></div>
-    </div>
+    <div class="auth-bg-overlay"></div>
     <div class="auth-card">
       <div class="auth-brand">
         <div class="auth-logo">
@@ -28,44 +24,21 @@ import { DataAnalysis } from '@element-plus/icons-vue'
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+  background-image: url('../assets/auth-bg.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
   position: relative;
   overflow: hidden;
   padding: 20px;
 }
 
-.auth-bg-shapes .shape {
+/* 深色渐变蒙层：压暗背景图，保证白色卡片与品牌标题的可读性 */
+.auth-bg-overlay {
   position: absolute;
-  border-radius: 50%;
-  filter: blur(90px);
+  inset: 0;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.55) 0%, rgba(30, 58, 138, 0.45) 100%);
   pointer-events: none;
-}
-
-.shape-1 {
-  width: 460px;
-  height: 460px;
-  background: #2563eb;
-  opacity: 0.4;
-  top: -120px;
-  left: -120px;
-}
-
-.shape-2 {
-  width: 340px;
-  height: 340px;
-  background: #3b82f6;
-  opacity: 0.3;
-  bottom: -80px;
-  right: 8%;
-}
-
-.shape-3 {
-  width: 240px;
-  height: 240px;
-  background: #059669;
-  opacity: 0.2;
-  top: 40%;
-  right: 28%;
 }
 
 .auth-card {
