@@ -39,7 +39,7 @@
       </el-descriptions>
     </div>
 
-    <el-tabs v-model="activeTab" v-loading="loading" class="detail-tabs">
+    <el-tabs v-if="dataset" v-model="activeTab" class="detail-tabs">
       <el-tab-pane label="数据分析" name="analysis">
         <div v-if="analysis" class="analysis-section">
           <h4>列统计信息</h4>
@@ -194,6 +194,7 @@
         </div>
       </el-tab-pane>
     </el-tabs>
+    <div v-else v-loading="true" class="detail-tabs-loading"></div>
 
     <!-- 分享数据集弹窗 -->
     <el-dialog v-model="shareDialogVisible" title="分享数据集" width="440px">
@@ -524,6 +525,10 @@ function formatSize(bytes: number) {
 
 .detail-tabs {
   background: transparent;
+}
+
+.detail-tabs-loading {
+  min-height: 200px;
 }
 
 .analysis-section h4 {

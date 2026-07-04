@@ -74,9 +74,24 @@ def parse_file_sync(dataset: Dataset) -> None:
             dataset.status = 'completed'
             dataset.save(update_fields=['row_count', 'column_count', 'status', 'updated_at'])
 
-        # 同步处理完成 → 异步生成推荐查询（复用 Celery 任务，不阻塞上传响应）
-        from apps.datasets.tasks import generate_suggested_questions
-        generate_suggested_questions.delay(str(dataset.id))
+        # 同步处理完成 → 同步生成推荐查询
+        # 小文件已走同步解析，推荐也同步做（不依赖 Celery worker 是否启动）
+        # LLM 约 3-5 秒，加在同步路径末尾，用户上传完进详情页就能看到推荐
+        from apps.datasets.services.analyzer import get_schema_summary
+        from apps.query.services.question_advisor import generate_suggested_questions
+        try:
+            schema_summary = get_schema_summary(dataset)
+            questions = generate_suggested_questions(
+                dataset_name=dataset.name,
+                schema_summary=schema_summary,
+                business_description=dataset.business_description,
+            )
+            if questions:
+                dataset.suggested_questions = questions
+                dataset.save(update_fields=['suggested_questions', 'updated_at'])
+        except Exception:
+            # 推荐失败不阻塞数据集使用（锦上添花）
+            pass
 
     except DatasetTooLargeError:
         # 超限是不可恢复的，清理 dataset 记录和文件，避免留下垃圾
