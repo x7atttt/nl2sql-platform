@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from apps.users.permissions import IsAnalyst
+from apps.users.permissions import IsViewer
 from apps.query.models import QueryHistory
 from apps.export.services.exporter import ExportService
 
@@ -14,9 +14,10 @@ class ExportView(APIView):
     """数据导出接口（CSV/Excel）
 
     根据 query_id 重新执行历史 SQL 并导出。
-    需要 analyst 及以上权限。
+    权限：任意登录用户（导出是只读操作——重跑 SELECT 取完整结果落盘，
+    viewer 本身就能查询，允许导出合理；数据范围仍按 user 隔离）。
     """
-    permission_classes = [IsAnalyst]
+    permission_classes = [IsViewer]
 
     def get(self, request, query_id, fmt):
         if fmt not in ('csv', 'xlsx'):
@@ -42,6 +43,15 @@ class ExportView(APIView):
             return Response(
                 {'error': '该查询未成功执行，无法导出'},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 可见性复检：撤销分享后历史记录仍在，但不能继续导出数据
+        # （修复 Bug #2：撤销分享后 viewer 仍可 export 拿完整数据的数据泄露）
+        from apps.datasets.services.visibility import can_access_dataset
+        if not can_access_dataset(request.user, query.dataset):
+            return Response(
+                {'error': '你已无权访问该数据集（分享可能已被撤销）'},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         # 重新执行 SQL 获取数据

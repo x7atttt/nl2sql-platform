@@ -18,18 +18,10 @@ class NL2SQLQueryView(APIView):
         serializer.is_valid(raise_exception=True)
         question = serializer.validated_data['question']
 
-        # 数据集可见性：与 DatasetViewSet.get_queryset 分层一致
-        # admin 任意、analyst 只查自己的、viewer 只查被分享的
-        user = request.user
-        if user.is_admin:
-            dataset = Dataset.objects.filter(id=dataset_id).first()
-        elif user.is_analyst:
-            dataset = Dataset.objects.filter(id=dataset_id, owner=user).first()
-        else:  # viewer
-            from django.db.models import Q
-            dataset = Dataset.objects.filter(
-                Q(owner=user) | Q(shares__shared_to=user)
-            ).filter(id=dataset_id).distinct().first()
+        # 数据集可见性：复用公共方法，统一口径（修复各接口可见性不一致）
+        # admin 任意 / analyst owner+shares / viewer 仅 shares
+        from apps.datasets.services.visibility import get_accessible_dataset
+        dataset = get_accessible_dataset(request.user, dataset_id)
 
         if dataset is None:
             return Response(
@@ -145,6 +137,15 @@ class QueryRerunView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        # 3.1 可见性复检：撤销分享后历史记录仍在，但不能继续访问数据
+        # （修复 Bug #2：撤销分享后 viewer 仍可 rerun 拿完整结果的数据泄露）
+        from apps.datasets.services.visibility import can_access_dataset
+        if not can_access_dataset(request.user, history.dataset):
+            return Response(
+                {'error': '你已无权访问该数据集（分享可能已被撤销）'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # 4. 重跑：复用 ExportService（已含自动 LIMIT 1000）
         from apps.export.services.exporter import ExportService
         try:
@@ -201,6 +202,15 @@ class ChartSuggestView(APIView):
                 {'error': '数据集已不存在或状态异常'},
                 status=status.HTTP_404_NOT_FOUND,
             )
+
+        # 可见性复检：撤销分享后不能继续访问数据（修复数据泄露）
+        from apps.datasets.services.visibility import can_access_dataset
+        if not can_access_dataset(request.user, history.dataset):
+            return Response(
+                {'error': '你已无权访问该数据集（分享可能已被撤销）'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         if not history.result_columns:
             return Response(
                 {'success': False, 'reason': '查询无结果列，无法可视化'},
