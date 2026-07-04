@@ -176,14 +176,14 @@ class ChartSuggestView(APIView):
     """
     permission_classes = [IsViewer]
 
-    def post(self, request, history_id):
+    def post(self, request, query_id):
         # 1. 取查询历史（admin 全部/非 admin 自己的，与 QueryHistoryView 一致）
         if request.user.is_admin:
             history_qs = QueryHistory.objects.all()
         else:
             history_qs = QueryHistory.objects.filter(user=request.user)
         try:
-            history = history_qs.select_related('dataset').get(id=history_id)
+            history = history_qs.select_related('dataset').get(id=query_id)
         except QueryHistory.DoesNotExist:
             return Response(
                 {'error': '查询记录不存在'},

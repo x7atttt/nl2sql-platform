@@ -108,6 +108,8 @@ const aiState = ref<'idle' | 'loading' | 'done' | 'failed'>('idle')
 let userOverridden = false
 
 // 数据/列变化时重新用规则引擎推荐（如换了查询结果）
+// 注意：不在这里重置 aiState/userOverridden，交由 queryId watch 统一管理
+// （两个 watch 同 tick 触发，顺序不确定，这里重置会吞掉 queryId 的 loading/failed 状态）
 watch(
   () => [props.columns, props.columnTypes, props.data],
   () => {
@@ -116,18 +118,17 @@ watch(
     currentXField.value = sug.xField
     currentYFields.value = sug.yFields
     _lastSuggestion.value = sug
-    // 重置 AI 状态，准备新一轮异步优化
-    aiState.value = 'idle'
-    userOverridden = false
   },
   { deep: true },
 )
 
-// queryId 变化时异步调 LLM 图表推荐（不阻塞默认图渲染）
+// queryId 变化 = 新查询：重置 AI 状态 + 异步调 LLM 图表推荐
 watch(
   () => props.queryId,
   async (newId) => {
     if (!newId) return
+    // 新查询：重置用户覆盖标记 + 进入 loading
+    userOverridden = false
     aiState.value = 'loading'
     try {
       const res = await queryApi.suggestChart(newId)
