@@ -97,7 +97,19 @@
             </el-input>
           </div>
 
-          <div v-if="queryResult" class="result-section">
+          <!-- AI 思考动画：查询进行中显示，降低用户等待焦虑 -->
+          <div v-if="queryLoading" class="thinking-card page-section">
+            <div class="thinking-content">
+              <div class="thinking-dots">
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span class="dot"></span>
+              </div>
+              <span class="thinking-text">{{ thinkingText }}</span>
+            </div>
+          </div>
+
+          <div v-if="queryResult && !queryLoading" class="result-section">
             <div v-if="queryResult.success" class="result-success">
               <div class="result-header">
                 <span>查询到 <strong>{{ queryResult.row_count }}</strong> 条数据，耗时 {{ queryResult.execution_time_ms }}ms</span>
@@ -234,7 +246,7 @@ created_at: 下单时间（UTC）"
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { Search, ArrowLeft, Download, DocumentCopy, Share, EditPen } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
@@ -256,6 +268,36 @@ const question = ref('')
 const queryLoading = ref(false)
 const queryResult = ref<any>(null)
 const currentQueryId = ref<string | null>(null)
+
+// AI 思考动画：查询进行中循环切换文案，降低用户等待焦虑
+const thinkingTexts = [
+  '正在分析数据结构',
+  '正在生成 SQL 查询',
+  '正在校验安全性',
+  '正在执行查询',
+  '正在整理结果',
+]
+const thinkingText = ref(thinkingTexts[0])
+let thinkingTimer: ReturnType<typeof setInterval> | null = null
+let thinkingIndex = 0
+
+function startThinking() {
+  thinkingIndex = 0
+  thinkingText.value = thinkingTexts[0]
+  thinkingTimer = setInterval(() => {
+    thinkingIndex = (thinkingIndex + 1) % thinkingTexts.length
+    thinkingText.value = thinkingTexts[thinkingIndex]
+  }, 1800) // 每 1.8 秒切换一句，配合 NL2SQL 5 步流水线的体感
+}
+
+function stopThinking() {
+  if (thinkingTimer) {
+    clearInterval(thinkingTimer)
+    thinkingTimer = null
+  }
+}
+
+onUnmounted(stopThinking)
 
 const canExport = computed(() => {
   const role = store.user?.role
@@ -329,6 +371,7 @@ async function handleQuery() {
   }
   queryLoading.value = true
   queryResult.value = null
+  startThinking()
   try {
     const res = await queryApi.query(id, question.value)
     queryResult.value = res.data
@@ -338,6 +381,7 @@ async function handleQuery() {
     }
   } finally {
     queryLoading.value = false
+    stopThinking()
   }
 }
 
@@ -502,6 +546,81 @@ function formatSize(bytes: number) {
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: var(--space-md);
+}
+
+/* AI 思考动画卡片 */
+.thinking-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xl) var(--space-lg);
+  margin-top: var(--space-md);
+}
+
+.thinking-content {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* 三个跳动圆点：错峰动画营造"思考"感 */
+.thinking-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.thinking-dots .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--brand-primary);
+  animation: thinking-bounce 1.4s infinite ease-in-out both;
+}
+
+.thinking-dots .dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.thinking-dots .dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes thinking-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.thinking-text {
+  font-size: 14px;
+  color: var(--brand-text-secondary);
+  font-weight: 500;
+  /* 文案切换时淡入效果 */
+  animation: thinking-fade 0.4s ease;
+}
+
+@keyframes thinking-fade {
+  from {
+    opacity: 0.3;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dots .dot {
+    animation: none;
+    opacity: 0.7;
+  }
+  .thinking-text {
+    animation: none;
+  }
 }
 
 .sql-block {
