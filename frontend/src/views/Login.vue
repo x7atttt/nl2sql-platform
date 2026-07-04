@@ -1,6 +1,6 @@
 <template>
   <AuthLayout>
-    <template #title>AI 数据分析平台</template>
+    <template #title>DataLens</template>
     <template #subtitle>登录以开始智能数据分析</template>
     <el-form :model="form" @submit.prevent="handleLogin">
       <el-form-item>

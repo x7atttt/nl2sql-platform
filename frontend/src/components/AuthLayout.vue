@@ -7,8 +7,10 @@
     </div>
     <div class="auth-card">
       <div class="auth-brand">
-        <div class="auth-logo">◈</div>
-        <h2><slot name="title">AI 数据分析平台</slot></h2>
+        <div class="auth-logo">
+          <el-icon><DataAnalysis /></el-icon>
+        </div>
+        <h2><slot name="title">DataLens</slot></h2>
         <p v-if="$slots.subtitle" class="auth-subtitle"><slot name="subtitle"></slot></p>
       </div>
       <slot></slot>
@@ -16,81 +18,94 @@
   </div>
 </template>
 
+<script setup lang="ts">
+import { DataAnalysis } from '@element-plus/icons-vue'
+</script>
+
 <style scoped>
 .auth-page {
   height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #1b2838;
+  background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
   position: relative;
   overflow: hidden;
-  padding-right: 10%;
+  padding: 20px;
 }
 
 .auth-bg-shapes .shape {
   position: absolute;
   border-radius: 50%;
-  filter: blur(80px);
+  filter: blur(90px);
   pointer-events: none;
 }
 
 .shape-1 {
-  width: 400px;
-  height: 400px;
-  background: var(--brand-sidebar-bg);
-  opacity: 0.4;
-  top: -100px;
-  left: -100px;
+  width: 460px;
+  height: 460px;
+  background: var(--brand-primary);
+  opacity: 0.35;
+  top: -120px;
+  left: -120px;
 }
 
 .shape-2 {
-  width: 300px;
-  height: 300px;
-  background: var(--brand-accent);
-  opacity: 0.15;
-  bottom: -50px;
-  right: 10%;
+  width: 340px;
+  height: 340px;
+  background: var(--brand-primary-light-3);
+  opacity: 0.25;
+  bottom: -80px;
+  right: 8%;
 }
 
 .shape-3 {
-  width: 200px;
-  height: 200px;
-  background: var(--brand-accent-secondary);
-  opacity: 0.1;
+  width: 240px;
+  height: 240px;
+  background: var(--brand-accent);
+  opacity: 0.15;
   top: 40%;
-  right: 30%;
+  right: 28%;
 }
 
 .auth-card {
   position: relative;
   width: 420px;
-  padding: 40px;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  box-shadow: var(--brand-shadow-lg);
+  padding: 44px 40px 36px;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-radius: var(--brand-radius-lg);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.35);
   z-index: 1;
 }
 
 .auth-brand {
   text-align: center;
-  margin-bottom: 28px;
+  margin-bottom: 32px;
 }
 
 .auth-logo {
-  font-size: 36px;
-  color: var(--brand-accent);
-  margin-bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--brand-primary), var(--brand-primary-light-3));
+  color: #ffffff;
+  font-size: 32px;
+  margin-bottom: 16px;
+  box-shadow: 0 8px 24px rgba(79, 70, 229, 0.35);
 }
 
 .auth-brand h2 {
-  font-size: 22px;
+  font-size: 26px;
   font-weight: 700;
   color: var(--brand-text-primary);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+  letter-spacing: -0.02em;
 }
 
 .auth-subtitle {
@@ -104,17 +119,20 @@
 
 .auth-card :deep(.el-button--primary) {
   width: 100%;
-  height: 44px;
+  height: 46px;
   font-weight: 600;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--brand-accent), var(--el-color-primary-dark-2));
-  border: none;
-  transition: transform 0.2s, box-shadow 0.2s;
+  font-size: 15px;
+  border-radius: var(--brand-radius-md);
+  background: var(--brand-primary);
+  border-color: var(--brand-primary);
+  transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
 }
 
 .auth-card :deep(.el-button--primary:hover) {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(58, 143, 212, 0.4);
+  background: var(--brand-primary-hover);
+  border-color: var(--brand-primary-hover);
+  box-shadow: var(--brand-shadow-primary);
 }
 
 .link-row {

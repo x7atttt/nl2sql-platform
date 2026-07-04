@@ -2,33 +2,36 @@
   <div class="page-container">
     <div class="page-header">
       <h2>数据集管理</h2>
-      <el-button
-        v-if="canShare"
-        type="primary"
-        :icon="Share"
-        :disabled="selectedIds.length === 0"
-        @click="openBatchShareDialog"
-      >
-        批量分享<template v-if="selectedIds.length > 0">（{{ selectedIds.length }}）</template>
-      </el-button>
-      <el-button
-        v-if="canUpload"
-        type="danger"
-        :icon="Delete"
-        :disabled="selectedIds.length === 0"
-        :loading="batchDeleting"
-        @click="handleBatchDelete"
-      >
-        批量删除<template v-if="selectedIds.length > 0">（{{ selectedIds.length }}）</template>
-      </el-button>
-      <el-button
-        v-if="canUpload"
-        type="primary"
-        :icon="Upload"
-        @click="showUploadDialog = true"
-      >
-        上传数据集
-      </el-button>
+      <div class="header-actions">
+        <el-button-group class="batch-actions" v-if="canShare || canUpload">
+          <el-button
+            v-if="canShare"
+            :icon="Share"
+            :disabled="selectedIds.length === 0"
+            @click="openBatchShareDialog"
+          >
+            批量分享<template v-if="selectedIds.length > 0">（{{ selectedIds.length }}）</template>
+          </el-button>
+          <el-button
+            v-if="canUpload"
+            type="danger"
+            :icon="Delete"
+            :disabled="selectedIds.length === 0"
+            :loading="batchDeleting"
+            @click="handleBatchDelete"
+          >
+            批量删除<template v-if="selectedIds.length > 0">（{{ selectedIds.length }}）</template>
+          </el-button>
+        </el-button-group>
+        <el-button
+          v-if="canUpload"
+          type="primary"
+          :icon="Upload"
+          @click="showUploadDialog = true"
+        >
+          上传数据集
+        </el-button>
+      </div>
     </div>
 
     <div class="page-section">
@@ -587,8 +590,31 @@ function formatTime(t: string) {
   line-height: 1.2;
 }
 .batch-hint {
-  color: var(--el-text-color-secondary);
+  color: var(--brand-text-secondary);
   font-size: 13px;
+}
+
+/* page-header 按钮分组：批量操作一组 + 上传独立 */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-actions .el-button-group {
+  display: inline-flex;
+}
+
+.header-actions .el-button-group .el-button {
+  border-radius: 0;
+}
+
+.header-actions .el-button-group .el-button:first-child {
+  border-radius: var(--brand-radius-md) 0 0 var(--brand-radius-md);
+}
+
+.header-actions .el-button-group .el-button:last-child {
+  border-radius: 0 var(--brand-radius-md) var(--brand-radius-md) 0;
 }
 
 /* 批量删除弹窗 */

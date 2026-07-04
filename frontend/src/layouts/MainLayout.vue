@@ -3,7 +3,7 @@
     <el-aside :width="isCollapse ? '64px' : '200px'" class="sidebar">
       <div class="logo">
         <span class="logo-icon"><el-icon><DataAnalysis /></el-icon></span>
-        <span v-show="!isCollapse" class="logo-text">AI 数据分析</span>
+        <span v-show="!isCollapse" class="logo-text">DataLens</span>
       </div>
       <el-menu
         :default-active="activeMenu"
