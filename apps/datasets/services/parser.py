@@ -98,9 +98,12 @@ def parse_file_sync(dataset: Dataset) -> None:
         delete_dataset_completely(dataset)
         raise
     except Exception:
-        # 其他失败（如解析错误）保留 failed 记录，便于在 Admin 排查
-        dataset.status = 'failed'
-        dataset.save(update_fields=['status', 'updated_at'])
+        # 其他失败（如解析错误、文件损坏）：清理 dataset 记录和文件。
+        # 之前保留 failed 记录想便于 Admin 排查，但 (owner, file_md5) 唯一约束
+        # 会导致用户重传同文件被 is_duplicate 拦截（409），永久锁死。
+        # 失败的 dataset 没有有效数据（transaction.atomic 已回滚），保留无业务价值，
+        # 排查问题看后端日志比看 DB failed 记录更有效。
+        delete_dataset_completely(dataset)
         raise
 
 # 以下为工具函数
