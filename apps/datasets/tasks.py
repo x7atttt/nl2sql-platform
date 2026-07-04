@@ -74,6 +74,9 @@ def process_large_file(self, dataset_id: str):
         dataset.save(update_fields=['row_count', 'status', 'updated_at'])
         _send_progress(dataset_id, total_rows, status='completed')
 
+        # 处理完成 → 异步生成推荐查询（不阻塞进度推送，LLM 7 秒）
+        generate_suggested_questions.delay(str(dataset.id))
+
     except DatasetTooLargeError as exc:
         # 超限是不可恢复的，重试也无意义，直接清理 + 通知前端
         logger.error(f'数据集 {dataset_id} 超限: {exc}')
@@ -134,3 +137,50 @@ def _send_progress(dataset_id: str, total_rows: int, status: str = 'processing')
         )
     except Exception:
         pass
+
+
+@shared_task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=10,
+    acks_late=True,
+)
+def generate_suggested_questions(self, dataset_id: str):
+    """异步生成推荐查询（数据集处理完成后触发）。
+
+    LLM 看 schema 摘要 + 业务说明生成 4 条推荐问题，缓存到
+    Dataset.suggested_questions。二次进入详情页读缓存不重算。
+    失败不阻塞数据集使用（推荐是锦上添花）。
+    """
+    from apps.datasets.models import Dataset
+    from apps.datasets.services.analyzer import get_schema_summary
+    from apps.query.services.question_advisor import generate_suggested_questions as gen_qs
+
+    try:
+        dataset = Dataset.objects.get(id=dataset_id)
+    except Dataset.DoesNotExist:
+        return
+
+    # 已生成过则跳过（避免重复消耗 LLM）
+    if dataset.suggested_questions:
+        return
+
+    # 数据集必须已完成处理才能生成 schema 摘要
+    if dataset.status != 'completed':
+        return
+
+    try:
+        schema_summary = get_schema_summary(dataset)
+        questions = gen_qs(
+            dataset_name=dataset.name,
+            schema_summary=schema_summary,
+            business_description=dataset.business_description,
+        )
+        if questions:
+            dataset.suggested_questions = questions
+            dataset.save(update_fields=['suggested_questions', 'updated_at'])
+            logger.info(f'数据集 {dataset_id} 生成 {len(questions)} 条推荐查询')
+    except Exception as exc:
+        logger.warning(f'生成推荐查询失败 {dataset_id}: {exc}')
+        # 推荐失败不值得重试（通常是 LLM 问题），静默放弃
+        # 用户仍可正常查询，只是没有推荐卡片

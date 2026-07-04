@@ -7,7 +7,7 @@ class DatasetSerializer(serializers.ModelSerializer):
     class Meta:
         model = Dataset
         fields = [
-            'id', 'name', 'description', 'business_description',
+            'id', 'name', 'description', 'business_description', 'suggested_questions',
             'file', 'file_name', 'file_size',
             'row_count', 'column_count', 'status',
             'owner', 'created_at', 'updated_at',

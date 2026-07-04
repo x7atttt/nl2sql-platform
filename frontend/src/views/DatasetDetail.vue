@@ -83,6 +83,28 @@
 
       <el-tab-pane label="自然语言查询" name="query">
         <div class="query-workspace">
+          <!-- AI 推荐查询：上传后自动生成 4 条，点击只填入查询框不执行 -->
+          <div
+            v-if="dataset.suggested_questions && dataset.suggested_questions.length > 0"
+            class="suggested-questions page-section"
+          >
+            <div class="sq-header">
+              <el-icon class="sq-icon"><MagicStick /></el-icon>
+              <span class="sq-title">试试这些问题</span>
+            </div>
+            <div class="sq-grid">
+              <button
+                v-for="(q, i) in dataset.suggested_questions"
+                :key="i"
+                class="sq-card"
+                :class="{ active: question === q }"
+                @click="question = q"
+              >
+                {{ q }}
+              </button>
+            </div>
+          </div>
+
           <div class="query-input-card page-section">
             <el-input
               v-model="question"
@@ -248,7 +270,7 @@ created_at: 下单时间（UTC）"
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { Search, ArrowLeft, Download, DocumentCopy, Share, EditPen } from '@element-plus/icons-vue'
+import { Search, ArrowLeft, Download, DocumentCopy, Share, EditPen, MagicStick } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { datasetApi } from '../api/dataset'
 import { queryApi } from '../api/query'
@@ -546,6 +568,66 @@ function formatSize(bytes: number) {
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: var(--space-md);
+}
+
+/* AI 推荐查询卡片 */
+.suggested-questions {
+  margin-bottom: var(--space-md);
+}
+
+.sq-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.sq-icon {
+  color: var(--brand-accent);
+  font-size: 18px;
+}
+
+.sq-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--brand-text-primary);
+}
+
+.sq-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.sq-card {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--brand-surface);
+  border: 1px solid var(--brand-border);
+  border-radius: var(--brand-radius-md);
+  font-size: 14px;
+  color: var(--brand-text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+  line-height: 1.4;
+}
+
+.sq-card:hover {
+  border-color: var(--brand-primary-light-5);
+  background: var(--brand-primary-light-9);
+  color: var(--brand-primary);
+  transform: translateY(-1px);
+  box-shadow: var(--brand-shadow-sm);
+}
+
+.sq-card.active {
+  border-color: var(--brand-primary);
+  background: var(--brand-primary-light-9);
+  color: var(--brand-primary);
+  font-weight: 500;
 }
 
 /* AI 思考动画卡片 */

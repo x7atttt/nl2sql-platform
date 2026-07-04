@@ -74,6 +74,10 @@ def parse_file_sync(dataset: Dataset) -> None:
             dataset.status = 'completed'
             dataset.save(update_fields=['row_count', 'column_count', 'status', 'updated_at'])
 
+        # 同步处理完成 → 异步生成推荐查询（复用 Celery 任务，不阻塞上传响应）
+        from apps.datasets.tasks import generate_suggested_questions
+        generate_suggested_questions.delay(str(dataset.id))
+
     except DatasetTooLargeError:
         # 超限是不可恢复的，清理 dataset 记录和文件，避免留下垃圾
         delete_dataset_completely(dataset)

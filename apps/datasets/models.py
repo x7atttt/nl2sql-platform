@@ -14,6 +14,13 @@ class Dataset(models.Model):
         verbose_name='业务说明',
         help_text='数据集业务背景/数据字典，注入 NL2SQL prompt 帮助理解字段语义'
     )
+    # LLM 根据数据集 schema 生成的推荐查询（冷启动提示，缓解空查询框焦虑）
+    # 数据集处理完成后异步生成；二次进入读缓存不重算
+    suggested_questions = models.JSONField(
+        null=True, blank=True,
+        verbose_name='推荐查询',
+        help_text='LLM 生成的 4 条推荐查询，供用户点击填入查询框',
+    )
     file = models.FileField(upload_to='datasets/%Y%m/', verbose_name='上传文件')
     file_name = models.CharField(max_length=255, verbose_name='原始文件名')
     file_size = models.BigIntegerField(verbose_name='文件大小(字节)')
