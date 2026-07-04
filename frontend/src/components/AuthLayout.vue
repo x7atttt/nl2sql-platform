@@ -28,7 +28,7 @@ import { DataAnalysis } from '@element-plus/icons-vue'
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
   position: relative;
   overflow: hidden;
   padding: 20px;
@@ -44,8 +44,8 @@ import { DataAnalysis } from '@element-plus/icons-vue'
 .shape-1 {
   width: 460px;
   height: 460px;
-  background: var(--brand-primary);
-  opacity: 0.35;
+  background: #1e3a5f;
+  opacity: 0.45;
   top: -120px;
   left: -120px;
 }
@@ -53,8 +53,8 @@ import { DataAnalysis } from '@element-plus/icons-vue'
 .shape-2 {
   width: 340px;
   height: 340px;
-  background: var(--brand-primary-light-3);
-  opacity: 0.25;
+  background: #2563eb;
+  opacity: 0.3;
   bottom: -80px;
   right: 8%;
 }
@@ -62,8 +62,8 @@ import { DataAnalysis } from '@element-plus/icons-vue'
 .shape-3 {
   width: 240px;
   height: 240px;
-  background: var(--brand-accent);
-  opacity: 0.15;
+  background: #059669;
+  opacity: 0.2;
   top: 40%;
   right: 28%;
 }
@@ -97,7 +97,7 @@ import { DataAnalysis } from '@element-plus/icons-vue'
   color: #ffffff;
   font-size: 32px;
   margin-bottom: 16px;
-  box-shadow: 0 8px 24px rgba(79, 70, 229, 0.35);
+  box-shadow: 0 8px 24px rgba(30, 58, 95, 0.4);
 }
 
 .auth-brand h2 {

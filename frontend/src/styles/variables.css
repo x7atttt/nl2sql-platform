@@ -1,33 +1,38 @@
 :root {
-  /* ===== 品牌色：Indigo（比旧 #3a8fd4 更饱和现代，对标 Linear/Vercel）===== */
-  --brand-primary: #4f46e5;
-  --brand-primary-hover: #4338ca;
-  --brand-primary-light-3: #6366f1;
-  --brand-primary-light-5: #818cf8;
-  --brand-primary-light-7: #a5b4fc;
-  --brand-primary-light-9: #eef2ff;
+  /* ===== 品牌色：深海军蓝（Invoice/金融工具风，稳重专业，避开 Indigo 紫）===== */
+  --brand-primary: #1e3a5f;
+  --brand-primary-hover: #172d4a;
+  --brand-primary-light-3: #345070;
+  --brand-primary-light-5: #5a7a9a;
+  --brand-primary-light-7: #9bb0c6;
+  --brand-primary-light-9: #e7edf4;
 
-  /* 强调色 Amber（CTA / 关键数据高亮） */
-  --brand-accent: #f59e0b;
-  --brand-accent-light: #fef3c7;
+  /* 辅助蓝（链接/次要强调）*/
+  --brand-blue: #2563eb;
+
+  /* 强调色：成交绿（CTA / 成功 / 关键数据高亮，金融语义）*/
+  --brand-accent: #059669;
+  --brand-accent-hover: #047857;
+  --brand-accent-light: #d1fae5;
 
   /* 语义色 */
-  --brand-success: #10b981;
+  --brand-success: #059669;
   --brand-success-light: #d1fae5;
-  --brand-warning: #f59e0b;
-  --brand-danger: #ef4444;
+  --brand-warning: #d97706;
+  --brand-warning-light: #fef3c7;
+  --brand-danger: #dc2626;
   --brand-danger-light: #fee2e2;
-  --brand-info: #6366f1;
+  --brand-info: #2563eb;
 
-  /* ===== 侧边栏：纯白现代风（对标 Linear/Notion/Vercel）===== */
+  /* ===== 侧边栏：纯白现代风 ===== */
   --brand-sidebar-bg: #ffffff;
   --brand-sidebar-hover: #f1f5f9;
-  --brand-sidebar-active: #eef2ff;
+  --brand-sidebar-active: #eef2f7;
   --brand-sidebar-text: #475569;
-  --brand-sidebar-text-active: #4f46e5;
+  --brand-sidebar-text-active: #1e3a5f;
   --brand-sidebar-border: #e2e8f0;
 
-  /* ===== 表面与文字（Slate 冷调，比旧 #1d2129 更专业）===== */
+  /* ===== 表面与文字 ===== */
   --brand-surface: #ffffff;
   --brand-surface-elevated: #ffffff;
   --brand-background: #f8fafc;
@@ -44,18 +49,18 @@
   --brand-font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --brand-font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Courier New', monospace;
 
-  /* 阴影：深蓝调（比黑色更柔和，对标 Apple/Vercel）*/
+  /* 阴影：深海军蓝调 */
   --brand-shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
   --brand-shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.04);
   --brand-shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.12), 0 4px 8px rgba(15, 23, 42, 0.04);
-  --brand-shadow-primary: 0 4px 14px rgba(79, 70, 229, 0.25);
+  --brand-shadow-primary: 0 4px 14px rgba(30, 58, 95, 0.3);
 
-  /* 圆角系统（统一层级）*/
+  /* 圆角系统 */
   --brand-radius-sm: 6px;
   --brand-radius-md: 10px;
   --brand-radius-lg: 14px;
 
-  /* 间距（4/8 倍数系统）*/
+  /* 间距 */
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 16px;
@@ -68,6 +73,6 @@
   --sidebar-collapsed: 64px;
   --topbar-height: 60px;
 
-  /* 兼容旧变量引用（过渡期保留，指向新值）*/
-  --brand-accent-secondary: #10b981;
+  /* 兼容旧变量引用 */
+  --brand-accent-secondary: #059669;
 }
