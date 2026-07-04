@@ -27,11 +27,13 @@ export default defineConfig({
         manualChunks: {
           // Vue 核心：vue + vue-router + pinia（几乎不变，长期缓存）
           'vue-vendor': ['vue', 'vue-router', 'pinia'],
-          // Element Plus：全量引入（按需引入会漏掉 TabNavRenderer 等深层组件
-          // 导致 el-tabs 渲染崩溃），独立 chunk 长期缓存抵消体积
-          'element-plus': ['element-plus'],
           // ECharts + vue-echarts：只在 DatasetDetail 用，独立 chunk 按需加载
           echarts: ['echarts', 'vue-echarts'],
+          // 注意：element-plus 不再强制独立 chunk。
+          // 原方案是全量引入 + 独立 chunk 长期缓存抵消体积；
+          // 现改为 main.ts 手动按需注册，若仍把 'element-plus' 整包归为一个 chunk，
+          // rollup 会把整个 es/index.mjs 的 re-export 图都拉进来（跨 chunk tree-shake 失效），
+          // 按需引入形同虚设。移除后各组件随使用方分散到对应 chunk，才能真正 tree-shake。
         },
       },
     },
