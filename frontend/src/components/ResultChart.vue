@@ -1,15 +1,30 @@
 <template>
   <div class="result-chart page-section">
-    <!-- 不适合可视化时 -->
-    <el-empty v-if="currentSuggestion.chartType === null" :description="currentSuggestion.reason">
-      <template #image>
-        <el-icon :size="48" color="var(--el-text-color-secondary)"><PieChart /></el-icon>
-      </template>
-    </el-empty>
+    <!-- 折叠头：可视化开关 + AI 优化状态（关闭时不渲染图表，省首屏空间） -->
+    <div class="chart-toggle-bar">
+      <div class="chart-toggle-left">
+        <el-icon class="chart-toggle-icon"><TrendCharts /></el-icon>
+        <span class="chart-toggle-label">可视化</span>
+        <el-switch v-model="showChart" size="small" />
+        <!-- 不适合可视化的提示（开关关闭时显示，告知用户原因） -->
+        <span v-if="!showChart && initial.chartType === null" class="chart-skip-hint">
+          {{ initial.reason }}
+        </span>
+      </div>
+      <!-- AI 优化状态（仅展开时显示） -->
+      <div v-if="showChart" class="chart-toggle-right">
+        <span v-if="aiState === 'loading'" class="ai-status loading">
+          <el-icon class="is-loading"><Loading /></el-icon> AI 优化中
+        </span>
+        <span v-else-if="aiState === 'done'" class="ai-status done" title="LLM 智能推荐已应用">
+          ✨ AI 优化
+        </span>
+      </div>
+    </div>
 
-    <!-- 可视化区 -->
-    <div v-else>
-      <!-- 工具栏：图表类型切换 + 轴选择 + AI 优化状态 -->
+    <!-- 可视化区（开关打开时才渲染，懒加载省资源） -->
+    <div v-if="showChart">
+      <!-- 工具栏：图表类型切换 + 轴选择 -->
       <div class="chart-toolbar">
         <el-radio-group v-model="currentType" size="small" @change="onUserOverride">
           <el-radio-button value="bar">柱状</el-radio-button>
@@ -34,13 +49,6 @@
           >
             <el-option v-for="c in measureOptions" :key="c" :label="c" :value="c" />
           </el-select>
-          <!-- AI 优化状态指示 -->
-          <span v-if="aiState === 'loading'" class="ai-status loading">
-            <el-icon class="is-loading"><Loading /></el-icon> AI 优化中
-          </span>
-          <span v-else-if="aiState === 'done'" class="ai-status done" title="LLM 智能推荐已应用">
-            ✨ AI 优化
-          </span>
         </div>
       </div>
 
@@ -62,7 +70,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { PieChart, Loading } from '@element-plus/icons-vue'
+import { Loading, TrendCharts } from '@element-plus/icons-vue'
 // 按需引入 ECharts（减小打包体积，比全量 import 省 ~600KB）
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -102,6 +110,10 @@ const currentType = ref<Exclude<ChartType, null>>(initial.chartType ?? 'bar')
 const currentXField = ref(initial.xField)
 const currentYFields = ref<string[]>(initial.yFields)
 
+// 可视化开关：智能默认——规则引擎判断"适合可视化"(chartType≠null)时自动展开，
+// 否则默认收起（单数字/明细数据不需要图表，避免占位突兀）。用户可手动开/关
+const showChart = ref(initial.chartType !== null)
+
 // AI 优化状态：idle（未触发）/ loading（请求中）/ done（已应用）/ failed（降级）
 const aiState = ref<'idle' | 'loading' | 'done' | 'failed'>('idle')
 // 用户是否手动改过图表配置（改过则不被 LLM 建议覆盖）
@@ -118,6 +130,8 @@ watch(
     currentXField.value = sug.xField
     currentYFields.value = sug.yFields
     _lastSuggestion.value = sug
+    // 新查询：按规则引擎结果重置展开状态（适合则展开，不适合则收起）
+    showChart.value = sug.chartType !== null
   },
   { deep: true },
 )
@@ -134,8 +148,10 @@ watch(
       const res = await queryApi.suggestChart(newId)
       if (res.data.success && res.data.suggestion && !userOverridden) {
         const sug = res.data.suggestion
-        // LLM 判断不适合可视化（chartType=null）：保留规则引擎图，只标记 AI 已评估
+        // LLM 判断不适合可视化（chartType=null）：收起开关 + 标记 AI 已评估
         if (sug.chartType === null) {
+          showChart.value = false
+          _lastSuggestion.value = sug
           aiState.value = 'done'
           return
         }
@@ -278,6 +294,43 @@ function buildScatterOption(x: string, y: string) {
 .result-chart {
   padding: var(--space-lg);
   margin-top: var(--space-md);
+}
+
+/* 可视化开关条 */
+.chart-toggle-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+}
+
+.chart-toggle-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chart-toggle-icon {
+  color: var(--brand-primary);
+  font-size: 18px;
+}
+
+.chart-toggle-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--brand-text-primary);
+}
+
+/* 不适合可视化的提示（开关关闭时显示） */
+.chart-skip-hint {
+  font-size: 12px;
+  color: var(--brand-text-tertiary);
+  margin-left: 4px;
+}
+
+.chart-toggle-right {
+  display: flex;
+  align-items: center;
 }
 
 .chart-toolbar {
