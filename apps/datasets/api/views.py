@@ -4,6 +4,7 @@ from django.db import IntegrityError
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from rest_framework.filters import SearchFilter
 
 from apps.users.permissions import IsAnalyst, IsViewer
 from apps.datasets.models import Dataset
@@ -20,6 +21,9 @@ class DatasetViewSet(viewsets.ModelViewSet):
 
     serializer_class = DatasetSerializer
     http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+    # 搜索：?search=关键词，匹配 name 或 business_description（icontains OR）
+    filter_backends = [SearchFilter]
+    search_fields = ['name', 'business_description']
 
     def get_permissions(self):
         if self.action in ('create', 'destroy', 'update', 'partial_update', 'share', 'shares', 'unshare', 'shareable_users'):

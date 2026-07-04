@@ -24,6 +24,11 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class ChangeRoleSerializer(serializers.ModelSerializer):
+    """用户管理 PATCH 用：改角色 + 启用/禁用。
+
+    两个字段都可选（partial=True），admin 可以单独改角色或单独恢复/禁用。
+    """
+
     class Meta:
         model = User
-        fields = ('role',)
+        fields = ('role', 'is_active')

@@ -38,12 +38,20 @@
         </el-table-column>
         <el-table-column label="操作" width="80">
           <template #default="{ row }">
+            <!-- 自己不能禁用/启用自己 -->
             <el-button
               v-if="row.id !== currentUserId && row.is_active"
               link type="danger"
               @click="handleDisable(row)"
             >
               禁用
+            </el-button>
+            <el-button
+              v-else-if="row.id !== currentUserId && !row.is_active"
+              link type="success"
+              @click="handleEnable(row)"
+            >
+              启用
             </el-button>
           </template>
         </el-table-column>
@@ -89,6 +97,14 @@ async function handleDisable(row: any) {
   try {
     await userApi.disableUser(row.id)
     ElMessage.success('用户已禁用')
+    fetchUsers()
+  } catch { /* interceptor handles error message */ }
+}
+
+async function handleEnable(row: any) {
+  try {
+    await userApi.enableUser(row.id)
+    ElMessage.success(`已恢复用户 "${row.username}"`)
     fetchUsers()
   } catch { /* interceptor handles error message */ }
 }

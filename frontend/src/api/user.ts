@@ -28,4 +28,9 @@ export const userApi = {
   disableUser(id: number) {
     return request.delete(`/api/users/manage/${id}/`)
   },
+
+  /** 恢复被禁用的用户（is_active=true） */
+  enableUser(id: number) {
+    return request.patch(`/api/users/manage/${id}/`, { is_active: true })
+  },
 }

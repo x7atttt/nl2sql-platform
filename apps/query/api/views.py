@@ -81,6 +81,11 @@ class QueryHistoryView(APIView):
         if dataset_id:
             queryset = queryset.filter(dataset_id=dataset_id)
 
+        # 搜索：?search=关键词，按问题文本模糊匹配（icontains）
+        search = request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(question__icontains=search)
+
         try:
             page = int(request.query_params.get('page', 1))
         except (ValueError, TypeError):

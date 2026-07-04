@@ -41,3 +41,4 @@ test/
 .env.production
 _ws_diag.log
 reference/
+test.http

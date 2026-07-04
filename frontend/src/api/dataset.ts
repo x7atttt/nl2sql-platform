@@ -1,8 +1,8 @@
 import request from './request'
 
 export const datasetApi = {
-  getList(page = 1) {
-    return request.get('/api/datasets/', { params: { page } })
+  getList(params: Record<string, unknown> = {}) {
+    return request.get('/api/datasets/', { params })
   },
 
   getDetail(id: string) {
@@ -36,6 +36,21 @@ export const datasetApi = {
   /** 获取可分享的用户列表（analyst/admin 可调，仅返回 id + username） */
   getShareableUsers() {
     return request.get(`/api/datasets/shareable_users/`)
+  },
+
+  /** 查看某数据集的分享记录（admin 任意 / analyst 仅自己的） */
+  getShares(id: string) {
+    return request.get(`/api/datasets/${id}/shares/`)
+  },
+
+  /** 撤销某数据集的单条分享 */
+  unshare(datasetId: string, shareId: string) {
+    return request.delete(`/api/datasets/${datasetId}/shares/${shareId}/`)
+  },
+
+  /** 跨数据集的全局分享记录列表（侧边栏分享记录页用，按角色范围隔离） */
+  getSharesList() {
+    return request.get('/api/datasets/shares_list/')
   },
 }
 
