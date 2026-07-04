@@ -22,7 +22,7 @@ class DatasetViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 
     def get_permissions(self):
-        if self.action in ('create', 'destroy', 'update', 'partial_update', 'share', 'shares', 'unshare'):
+        if self.action in ('create', 'destroy', 'update', 'partial_update', 'share', 'shares', 'unshare', 'shareable_users'):
             return [IsAnalyst()]
         return [IsViewer()]
 
