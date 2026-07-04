@@ -29,45 +29,48 @@
 
               <!-- 成功查询：预览数据 + 重跑按钮 -->
               <template v-else>
-                <div class="expand-header">
-                  <span>
-                    共 <strong>{{ row.result_count }}</strong> 行
-                    <el-tag v-if="row.result_count > 20" size="small" type="info" class="preview-tag">
-                      仅展示前 20 行预览
-                    </el-tag>
-                  </span>
-                  <el-button
-                    type="primary"
-                    size="small"
-                    :loading="rerunningId === row.id"
-                    @click="handleRerun(row)"
+                <!-- 预览模式（未重跑或已收起重跑结果） -->
+                <div v-if="!rerunResult[row.id]">
+                  <div class="expand-header">
+                    <span>
+                      共 <strong>{{ row.result_count }}</strong> 行
+                      <el-tag v-if="row.result_count > 20" size="small" type="info" class="preview-tag">
+                        仅展示前 20 行预览
+                      </el-tag>
+                    </span>
+                    <el-button
+                      type="primary"
+                      size="small"
+                      :loading="rerunningId === row.id"
+                      @click="handleRerun(row)"
+                    >
+                      <el-icon><Refresh /></el-icon>
+                      重跑获取完整结果
+                    </el-button>
+                  </div>
+
+                  <!-- 预览表格 -->
+                  <el-table
+                    v-if="row.result_preview && row.result_preview.length"
+                    :data="row.result_preview"
+                    stripe border size="small"
+                    max-height="320"
+                    class="preview-table"
                   >
-                    <el-icon><Refresh /></el-icon>
-                    重跑获取完整结果
-                  </el-button>
+                    <el-table-column
+                      v-for="col in (row.result_columns || [])"
+                      :key="col"
+                      :prop="col"
+                      :label="col"
+                      min-width="120"
+                      show-overflow-tooltip
+                    />
+                  </el-table>
+                  <el-empty v-else description="无预览数据" :image-size="60" />
                 </div>
 
-                <!-- 预览表格 -->
-                <el-table
-                  v-if="row.result_preview && row.result_preview.length"
-                  :data="row.result_preview"
-                  stripe border size="small"
-                  max-height="320"
-                  class="preview-table"
-                >
-                  <el-table-column
-                    v-for="col in (row.result_columns || [])"
-                    :key="col"
-                    :prop="col"
-                    :label="col"
-                    min-width="120"
-                    show-overflow-tooltip
-                  />
-                </el-table>
-                <el-empty v-else description="无预览数据" :image-size="60" />
-
-                <!-- 重跑完整结果（覆盖展示） -->
-                <div v-if="rerunResult[row.id]" class="rerun-result">
+                <!-- 重跑完整结果（增量替换预览，不重复展示） -->
+                <div v-else class="rerun-result">
                   <div class="rerun-header">
                     <span>
                       重跑结果：共 <strong>{{ rerunResult[row.id].row_count }}</strong> 行
