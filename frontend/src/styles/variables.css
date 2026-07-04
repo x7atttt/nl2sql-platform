@@ -1,16 +1,16 @@
 :root {
-  /* ===== 品牌色：深海军蓝（Invoice/金融工具风，稳重专业，避开 Indigo 紫）===== */
-  --brand-primary: #1e3a5f;
-  --brand-primary-hover: #172d4a;
-  --brand-primary-light-3: #345070;
-  --brand-primary-light-5: #5a7a9a;
-  --brand-primary-light-7: #9bb0c6;
-  --brand-primary-light-9: #e7edf4;
+  /* ===== 品牌色：纯净蓝（Stripe/Notion 风，明度适中，白底不撕裂）===== */
+  --brand-primary: #2563eb;
+  --brand-primary-hover: #1d4ed8;
+  --brand-primary-light-3: #3b82f6;
+  --brand-primary-light-5: #60a5fa;
+  --brand-primary-light-7: #93c5fd;
+  --brand-primary-light-9: #eff6ff;
 
-  /* 辅助蓝（链接/次要强调）*/
-  --brand-blue: #2563eb;
+  /* 辅助深蓝（侧边栏 active 文字/重点强调用，比主色更深一档）*/
+  --brand-blue-deep: #1e3a8a;
 
-  /* 强调色：成交绿（CTA / 成功 / 关键数据高亮，金融语义）*/
+  /* 强调色：成交绿（CTA / 成功 / 关键数据高亮）*/
   --brand-accent: #059669;
   --brand-accent-hover: #047857;
   --brand-accent-light: #d1fae5;
@@ -27,9 +27,9 @@
   /* ===== 侧边栏：纯白现代风 ===== */
   --brand-sidebar-bg: #ffffff;
   --brand-sidebar-hover: #f1f5f9;
-  --brand-sidebar-active: #eef2f7;
+  --brand-sidebar-active: #eff6ff;
   --brand-sidebar-text: #475569;
-  --brand-sidebar-text-active: #1e3a5f;
+  --brand-sidebar-text-active: #1d4ed8;
   --brand-sidebar-border: #e2e8f0;
 
   /* ===== 表面与文字 ===== */
@@ -49,11 +49,11 @@
   --brand-font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --brand-font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Courier New', monospace;
 
-  /* 阴影：深海军蓝调 */
+  /* 阴影 */
   --brand-shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
   --brand-shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.04);
   --brand-shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.12), 0 4px 8px rgba(15, 23, 42, 0.04);
-  --brand-shadow-primary: 0 4px 14px rgba(30, 58, 95, 0.3);
+  --brand-shadow-primary: 0 4px 14px rgba(37, 99, 235, 0.3);
 
   /* 圆角系统 */
   --brand-radius-sm: 6px;

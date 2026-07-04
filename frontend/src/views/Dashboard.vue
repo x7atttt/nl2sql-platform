@@ -58,7 +58,7 @@ const queryCount = ref(0)
 const recentDatasets = ref<any[]>([])
 
 const statCards = computed(() => [
-  { label: '数据集总数', value: datasetCount.value, icon: FolderOpened, color: '#1e3a5f' },
+  { label: '数据集总数', value: datasetCount.value, icon: FolderOpened, color: '#2563eb' },
   { label: '查询记录数', value: queryCount.value, icon: DataAnalysis, color: '#059669' },
   {
     label: '当前角色',
