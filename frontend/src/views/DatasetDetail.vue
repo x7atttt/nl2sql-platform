@@ -119,16 +119,14 @@
             </el-input>
           </div>
 
-          <!-- AI 思考动画：查询进行中显示，降低用户等待焦虑 -->
-          <div v-if="queryLoading" class="thinking-card page-section">
-            <div class="thinking-content">
-              <div class="thinking-dots">
-                <span class="dot"></span>
-                <span class="dot"></span>
-                <span class="dot"></span>
-              </div>
-              <span class="thinking-text">{{ thinkingText }}</span>
+          <!-- AI 思考动画：紧贴输入框下方的轻量提示条，不占独立卡片块避免被挤出可视区 -->
+          <div v-if="queryLoading" class="thinking-inline">
+            <div class="thinking-dots">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
             </div>
+            <span class="thinking-text">{{ thinkingText }}</span>
           </div>
 
           <div v-if="queryResult && !queryLoading" class="result-section">
@@ -196,8 +194,8 @@
     </el-tabs>
     <div v-else v-loading="true" class="detail-tabs-loading"></div>
 
-    <!-- 分享数据集弹窗 -->
-    <el-dialog v-model="shareDialogVisible" title="分享数据集" width="440px">
+    <!-- 分享数据集弹窗（含当前分享记录 + 撤销）-->
+    <el-dialog v-model="shareDialogVisible" title="分享数据集" width="560px">
       <el-form label-width="80px">
         <el-form-item label="数据集">
           <span>{{ dataset?.name }}</span>
@@ -219,6 +217,46 @@
           </el-select>
         </el-form-item>
       </el-form>
+
+      <!-- 当前分享记录（admin 任意 / analyst 仅自己 owner 的） -->
+      <div class="share-records-section">
+        <div class="share-records-header">
+          <span>当前分享记录（{{ shareRecords.length }}）</span>
+        </div>
+        <el-table
+          :data="shareRecords"
+          size="small"
+          v-loading="sharesLoading"
+          empty-text="暂无分享记录"
+        >
+          <el-table-column label="被分享人" min-width="130">
+            <template #default="{ row }">
+              {{ row.shared_to.username }}（{{ roleLabel(row.shared_to.role) }}）
+            </template>
+          </el-table-column>
+          <el-table-column label="分享人" width="100">
+            <template #default="{ row }">{{ row.shared_by.username }}</template>
+          </el-table-column>
+          <el-table-column label="分享时间" width="155">
+            <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="64" fixed="right">
+            <template #default="{ row }">
+              <el-popconfirm
+                title="确定撤销该用户的查询权限？"
+                confirm-button-text="撤销"
+                cancel-button-text="取消"
+                @confirm="handleUnshare(row.id)"
+              >
+                <template #reference>
+                  <el-button class="action-icon-btn" link type="danger" :icon="Delete" />
+                </template>
+              </el-popconfirm>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+
       <template #footer>
         <el-button @click="shareDialogVisible = false">取消</el-button>
         <el-button
@@ -271,7 +309,7 @@ created_at: 下单时间（UTC）"
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { Search, ArrowLeft, Download, DocumentCopy, Share, EditPen, MagicStick } from '@element-plus/icons-vue'
+import { Search, ArrowLeft, Download, DocumentCopy, Share, EditPen, MagicStick, Delete } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { datasetApi } from '../api/dataset'
 import { queryApi } from '../api/query'
@@ -361,6 +399,17 @@ const shareUsersLoading = ref(false)
 const shareTargetId = ref<number | null>(null)
 const sharing = ref(false)
 
+// 分享记录（对话框内展示 + 撤销操作）
+interface ShareRecord {
+  id: string
+  shared_to: { id: number; username: string; role: string }
+  shared_by: { id: number; username: string }
+  permission: string
+  created_at: string
+}
+const shareRecords = ref<ShareRecord[]>([])
+const sharesLoading = ref(false)
+
 const resultColumns = computed(() => {
   if (!queryResult.value?.data?.length) return []
   return Object.keys(queryResult.value.data[0])
@@ -433,14 +482,31 @@ async function handleExport(format: 'csv' | 'xlsx') {
 async function openShareDialog() {
   shareDialogVisible.value = true
   shareTargetId.value = null
+  // 同时拉取可分享用户列表 + 当前分享记录
   shareUsersLoading.value = true
+  sharesLoading.value = true
   try {
-    const res = await datasetApi.getShareableUsers()
-    shareableUsers.value = res.data
+    const [usersRes, sharesRes] = await Promise.all([
+      datasetApi.getShareableUsers(),
+      dataset.value ? datasetApi.getShares(dataset.value.id) : Promise.resolve({ data: [] }),
+    ])
+    shareableUsers.value = usersRes.data
+    shareRecords.value = sharesRes.data
   } catch {
-    ElMessage.error('获取用户列表失败')
+    ElMessage.error('获取分享信息失败')
   } finally {
     shareUsersLoading.value = false
+    sharesLoading.value = false
+  }
+}
+
+async function refreshShares() {
+  if (!dataset.value) return
+  try {
+    const res = await datasetApi.getShares(dataset.value.id)
+    shareRecords.value = res.data
+  } catch {
+    /* 静默失败，不打断主流程 */
   }
 }
 
@@ -450,12 +516,25 @@ async function handleShare() {
   try {
     const res = await datasetApi.share(dataset.value.id, shareTargetId.value)
     ElMessage.success(res.data.message || '分享成功')
-    shareDialogVisible.value = false
+    shareTargetId.value = null  // 清空选择，便于继续分享给下一个
+    refreshShares()  // 刷新分享记录，让新分享立即出现在表格里
   } catch (e: any) {
     const msg = e?.response?.data?.error || '分享失败'
     ElMessage.error(msg)
   } finally {
     sharing.value = false
+  }
+}
+
+async function handleUnshare(shareId: string) {
+  if (!dataset.value) return
+  try {
+    await datasetApi.unshare(dataset.value.id, shareId)
+    ElMessage.success('已撤销分享')
+    refreshShares()
+  } catch (e: any) {
+    const msg = e?.response?.data?.error || '撤销失败'
+    ElMessage.error(msg)
   }
 }
 
@@ -503,9 +582,46 @@ function formatSize(bytes: number) {
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
+
+function formatTime(t: string) {
+  if (!t) return '-'
+  return t.replace('T', ' ').slice(0, 19)
+}
 </script>
 
 <style scoped>
+/* 操作列图标按钮：方形热区（与 DatasetList/QueryHistory 一致） */
+.action-icon-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: var(--brand-radius-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: background 0.15s ease;
+}
+
+.action-icon-btn:hover {
+  background: var(--brand-primary-light-9);
+}
+
+/* 分享记录区域（对话框内） */
+.share-records-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--brand-border);
+}
+
+.share-records-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--brand-text-secondary);
+  margin-bottom: 8px;
+}
+
 .header-left {
   display: flex;
   align-items: center;
@@ -635,25 +751,22 @@ function formatSize(bytes: number) {
   font-weight: 500;
 }
 
-/* AI 思考动画卡片 */
-.thinking-card {
+/* AI 思考提示：紧贴输入框下方的轻量内联条（非独立卡片，避免被挤出可视区）*/
+.thinking-inline {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: var(--space-xl) var(--space-lg);
-  margin-top: var(--space-md);
-}
-
-.thinking-content {
-  display: flex;
-  align-items: center;
-  gap: 14px;
+  gap: 12px;
+  padding: 10px 16px;
+  margin-top: -8px;       /* 向上贴近输入框，消除输入卡片与本条的间距 */
+  margin-bottom: var(--space-md);
+  background: var(--brand-primary-light-9);
+  border-radius: 0 0 var(--brand-radius-md) var(--brand-radius-md);
 }
 
 /* 三个跳动圆点：错峰动画营造"思考"感 */
 .thinking-dots {
   display: flex;
-  gap: 6px;
+  gap: 5px;
 }
 
 .thinking-dots .dot {

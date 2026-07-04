@@ -20,21 +20,22 @@ import { createPinia } from 'pinia'
 // 自动按需更安全的根因——后者只解析模板顶层标签，漏掉 TabNavRenderer 导致崩溃）。
 import { ElAlert } from 'element-plus/es/components/alert/index'
 import { ElButton } from 'element-plus/es/components/button/index'
-import { ElContainer, ElAside, ElHeader, ElMain } from 'element-plus/es/components/container/index'
+import { ElContainer } from 'element-plus/es/components/container/index'
 import { ElDialog } from 'element-plus/es/components/dialog/index'
-import { ElDropdown, ElDropdownItem, ElDropdownMenu } from 'element-plus/es/components/dropdown/index'
+import { ElDropdown } from 'element-plus/es/components/dropdown/index'
 import { ElEmpty } from 'element-plus/es/components/empty/index'
-import { ElForm, ElFormItem } from 'element-plus/es/components/form/index'
+import { ElForm } from 'element-plus/es/components/form/index'
 import { ElIcon } from 'element-plus/es/components/icon/index'
 import { ElInput } from 'element-plus/es/components/input/index'
-import { ElDescriptions, ElDescriptionsItem } from 'element-plus/es/components/descriptions/index'
-import { ElMenu, ElMenuItem } from 'element-plus/es/components/menu/index'
+import { ElDescriptions } from 'element-plus/es/components/descriptions/index'
+import { ElMenu } from 'element-plus/es/components/menu/index'
 import { ElPagination } from 'element-plus/es/components/pagination/index'
-import { ElRadioGroup, ElRadioButton } from 'element-plus/es/components/radio/index'
-import { ElSelect, ElOption } from 'element-plus/es/components/select/index'
+import { ElPopconfirm } from 'element-plus/es/components/popconfirm/index'
+import { ElRadio } from 'element-plus/es/components/radio/index'
+import { ElSelect } from 'element-plus/es/components/select/index'
 import { ElSwitch } from 'element-plus/es/components/switch/index'
-import { ElTable, ElTableColumn } from 'element-plus/es/components/table/index'
-import { ElTabs, ElTabPane } from 'element-plus/es/components/tabs/index'
+import { ElTable } from 'element-plus/es/components/table/index'
+import { ElTabs } from 'element-plus/es/components/tabs/index'
 import { ElTag } from 'element-plus/es/components/tag/index'
 import { ElTooltip } from 'element-plus/es/components/tooltip/index'
 import { ElUpload } from 'element-plus/es/components/upload/index'
@@ -62,6 +63,8 @@ import 'element-plus/es/components/menu/style/css'
 import 'element-plus/es/components/menu-item/style/css'
 import 'element-plus/es/components/option/style/css'
 import 'element-plus/es/components/pagination/style/css'
+import 'element-plus/es/components/popconfirm/style/css'
+import 'element-plus/es/components/popover/style/css'
 import 'element-plus/es/components/radio-button/style/css'
 import 'element-plus/es/components/radio-group/style/css'
 import 'element-plus/es/components/select/style/css'
@@ -101,36 +104,28 @@ app.use(createPinia())
 app.use(router)
 
 // Element Plus 组件按需注册
+// 只注册 withInstall 父组件——它们的 install 会自动注册子组件
+// （withNoopInstall 子组件如 ElAside/ElFormItem/ElTabPane 自身 install 是空操作，
+//   必须靠父组件 ElContainer/ElForm/ElTabs 的 withInstall extra 列表带上）
 const elementPlugins = [
   ElAlert,
-  ElAside,
-  ElButton,
-  ElContainer,
+  ElButton,        // 自动注册 ElButtonGroup
+  ElContainer,     // 自动注册 ElAside/ElHeader/ElMain/ElFooter
   ElDialog,
-  ElDropdown,
-  ElDropdownItem,
-  ElDropdownMenu,
+  ElDropdown,      // 自动注册 ElDropdownItem/ElDropdownMenu
   ElEmpty,
-  ElForm,
-  ElFormItem,
-  ElHeader,
+  ElForm,          // 自动注册 ElFormItem
   ElIcon,
   ElInput,
-  ElMain,
-  ElDescriptions,
-  ElDescriptionsItem,
-  ElMenu,
-  ElMenuItem,
-  ElOption,
+  ElDescriptions,  // 自动注册 ElDescriptionsItem
+  ElMenu,          // 自动注册 ElMenuItem/ElMenuItemGroup/ElSubMenu
   ElPagination,
-  ElRadioButton,
-  ElRadioGroup,
-  ElSelect,
+  ElPopconfirm,
+  ElRadio,         // 自动注册 ElRadioGroup/ElRadioButton
+  ElSelect,        // 自动注册 ElOption/ElOptionGroup
   ElSwitch,
-  ElTable,
-  ElTableColumn,
-  ElTabs,
-  ElTabPane,
+  ElTable,         // 自动注册 ElTableColumn
+  ElTabs,          // 自动注册 ElTabPane
   ElTag,
   ElTooltip,
   ElUpload,

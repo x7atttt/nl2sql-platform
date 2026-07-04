@@ -22,6 +22,10 @@
           <el-icon><Clock /></el-icon>
           <template #title>查询历史</template>
         </el-menu-item>
+        <el-menu-item index="/shares">
+          <el-icon><Share /></el-icon>
+          <template #title>分享记录</template>
+        </el-menu-item>
         <el-menu-item v-if="isAdmin" index="/users/manage">
           <el-icon><User /></el-icon>
           <template #title>用户管理</template>
@@ -52,7 +56,7 @@
         </div>
       </el-header>
 
-      <el-main>
+      <el-main class="main-content">
         <router-view v-slot="{ Component, route: childRoute }">
           <transition name="route" mode="out-in">
             <component :is="Component" :key="childRoute.path" />
@@ -194,6 +198,14 @@ async function handleLogout() {
   background: var(--brand-surface);
   box-shadow: var(--brand-shadow-sm);
   z-index: 1;
+}
+
+/* 覆盖 el-main 默认 padding（默认 20px，与 page-container 自身 padding 叠加导致边距过大）。
+   统一左右间距在此层控制（一处调整，所有子页面生效）；
+   上下间距交给 .page-container 的 padding-block 管理。 */
+.main-content {
+  padding: 0 var(--space-4xl);
+  overflow-y: auto;
 }
 
 .collapse-btn {

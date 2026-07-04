@@ -34,18 +34,30 @@
       </div>
     </div>
 
+    <!-- 搜索栏 -->
+    <div class="filter-bar">
+      <el-input
+        v-model="searchKeyword"
+        placeholder="搜索数据集名称或业务说明..."
+        clearable
+        :prefix-icon="Search"
+        style="width: 320px"
+        @input="onSearchInput"
+        @clear="fetchList"
+      />
+    </div>
+
     <div class="page-section">
       <el-table :data="datasets" v-loading="loading" stripe row-key="id" @selection-change="handleSelectionChange">
-        <el-table-column type="selection" width="48" />
-        <el-table-column prop="name" label="名称" min-width="150" />
-        <el-table-column prop="file_name" label="文件名" min-width="150" />
-        <el-table-column label="行数" width="90">
+        <el-table-column type="selection" width="42" />
+        <el-table-column prop="name" label="名称" width="150" show-overflow-tooltip />
+        <el-table-column label="行数" width="80">
           <template #default="{ row }">{{ row.row_count || '-' }}</template>
         </el-table-column>
-        <el-table-column label="列数" width="90">
+        <el-table-column label="列数" width="64">
           <template #default="{ row }">{{ row.column_count || '-' }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="130">
+        <el-table-column label="状态" width="92">
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)" size="small">
               {{ statusLabel(row.status) }}
@@ -55,22 +67,28 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="大小" width="100">
+        <el-table-column label="大小" width="84">
           <template #default="{ row }">{{ formatSize(row.file_size) }}</template>
         </el-table-column>
-        <el-table-column label="创建时间" width="170">
+        <el-table-column label="业务说明" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.business_description">{{ row.business_description }}</span>
+            <span v-else class="text-tertiary">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="创建时间" min-width="150">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="104" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="goDetail(row.id)">查看</el-button>
-            <el-button
-              v-if="canUpload"
-              link type="danger"
-              @click="handleDelete(row)"
-            >
-              删除
-            </el-button>
+            <div class="action-btns">
+              <el-tooltip content="查看详情" placement="top">
+                <el-button class="action-icon-btn" link type="primary" :icon="View" @click="goDetail(row.id)" />
+              </el-tooltip>
+              <el-tooltip v-if="canUpload" content="删除" placement="top">
+                <el-button class="action-icon-btn" link type="danger" :icon="Delete" @click="handleDelete(row)" />
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -217,7 +235,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Upload, Share, Delete, Document, WarningFilled } from '@element-plus/icons-vue'
+import { Upload, Share, Delete, Document, WarningFilled, View, Search } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { datasetApi, createProgressSocket } from '../api/dataset'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -228,6 +246,17 @@ const loading = ref(false)
 const datasets = ref<any[]>([])
 const total = ref(0)
 const page = ref(1)
+
+// 搜索（防抖）
+const searchKeyword = ref('')
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+function onSearchInput() {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    page.value = 1
+    fetchList()
+  }, 400)
+}
 
 const canUpload = computed(() => {
   const role = store.user?.role
@@ -287,7 +316,9 @@ onUnmounted(() => {
 async function fetchList() {
   loading.value = true
   try {
-    const res = await datasetApi.getList(page.value)
+    const params: Record<string, unknown> = { page: page.value }
+    if (searchKeyword.value) params.search = searchKeyword.value
+    const res = await datasetApi.getList(params)
     datasets.value = res.data.results
     total.value = res.data.count
   } finally {
@@ -594,6 +625,11 @@ function formatTime(t: string) {
   font-size: 13px;
 }
 
+/* 搜索栏 */
+.filter-bar {
+  margin-bottom: var(--space-md);
+}
+
 /* page-header 按钮分组：批量操作一组 + 上传独立 */
 .header-actions {
   display: flex;
@@ -620,6 +656,35 @@ function formatTime(t: string) {
 /* 批量删除弹窗 */
 .delete-body {
   padding: 0 4px;
+}
+
+/* 操作列：图标按钮紧凑排列，加大点击热区（方形 36×36）*/
+.action-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 图标按钮：撑大点击区域，整个方形区域可点 */
+.action-icon-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: var(--brand-radius-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  transition: background 0.15s ease;
+}
+
+.action-icon-btn:hover {
+  background: var(--brand-primary-light-9);
+}
+
+:deep(.el-table__fixed-right) .el-table__cell {
+  padding-right: 12px;
 }
 .delete-head {
   display: flex;

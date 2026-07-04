@@ -2,14 +2,25 @@
   <div class="page-container">
     <div class="page-header">
       <h2>查询历史</h2>
-      <el-select v-model="filterDatasetId" placeholder="按数据集筛选" clearable @change="fetchHistory">
-        <el-option
-          v-for="ds in datasetOptions"
-          :key="ds.id"
-          :label="ds.name"
-          :value="ds.id"
+      <div class="filter-bar">
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索问题..."
+          clearable
+          :prefix-icon="Search"
+          style="width: 240px"
+          @input="onSearchInput"
+          @clear="fetchHistory"
         />
-      </el-select>
+        <el-select v-model="filterDatasetId" placeholder="按数据集筛选" clearable @change="fetchHistory">
+          <el-option
+            v-for="ds in datasetOptions"
+            :key="ds.id"
+            :label="ds.name"
+            :value="ds.id"
+          />
+        </el-select>
+      </div>
     </div>
 
     <div class="page-section">
@@ -97,37 +108,64 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="dataset_name" label="数据集" min-width="120" />
-        <el-table-column v-if="isAdmin" prop="username" label="查询人" width="100" />
-        <el-table-column prop="question" label="问题" min-width="200" show-overflow-tooltip />
-        <el-table-column label="SQL" min-width="250">
+        <el-table-column prop="dataset_name" label="数据集" min-width="110" show-overflow-tooltip />
+        <el-table-column v-if="isAdmin" prop="username" label="查询人" width="90" />
+        <el-table-column prop="question" label="问题" min-width="160" show-overflow-tooltip />
+        <el-table-column label="SQL" min-width="200">
           <template #default="{ row }">
-            <el-tooltip :content="row.generated_sql" placement="top">
-              <span class="sql-preview">{{ row.generated_sql }}</span>
-            </el-tooltip>
+            <!-- 收起态：单行 truncate + 展开链接 -->
+            <div v-if="expandedSqlId !== row.id" class="sql-collapsed">
+              <span class="sql-preview" @click="toggleSql(row.id)">{{ row.generated_sql }}</span>
+              <el-button link type="primary" size="small" class="sql-toggle" @click="toggleSql(row.id)">展开</el-button>
+            </div>
+            <!-- 展开态：完整 SQL 代码块 + 复制 + 收起 -->
+            <div v-else class="sql-expanded">
+              <div class="sql-expanded-header">
+                <span class="sql-label">SQL</span>
+                <div class="sql-expanded-actions">
+                  <el-button link type="primary" size="small" :icon="DocumentCopy" @click="copySql(row.generated_sql)">复制</el-button>
+                  <el-button link size="small" @click="toggleSql(row.id)">收起</el-button>
+                </div>
+              </div>
+              <pre class="sql-code-block">{{ row.generated_sql }}</pre>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="80">
+        <el-table-column label="状态" width="70">
           <template #default="{ row }">
             <el-tag :type="row.is_success ? 'success' : 'danger'" size="small">
               {{ row.is_success ? '成功' : '失败' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="行数" width="80">
+        <el-table-column label="行数" width="70">
           <template #default="{ row }">
             {{ row.is_success ? row.result_count : '-' }}
           </template>
         </el-table-column>
-        <el-table-column label="耗时" width="90">
+        <el-table-column label="耗时" width="80">
           <template #default="{ row }">{{ row.execution_time_ms ? row.execution_time_ms + 'ms' : '-' }}</template>
         </el-table-column>
-        <el-table-column label="时间" width="170">
+        <el-table-column label="时间" width="150">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="80">
+        <el-table-column label="操作" width="110" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="goDetail(row.dataset)">查看</el-button>
+            <div class="action-btns">
+              <el-tooltip content="查看数据集" placement="top">
+                <el-button class="action-icon-btn" link type="primary" :icon="View" @click="goDetail(row.dataset)" />
+              </el-tooltip>
+              <el-tooltip content="导出数据" placement="top">
+                <el-button
+                  class="action-icon-btn"
+                  link
+                  type="success"
+                  :icon="Download"
+                  :disabled="!row.is_success"
+                  @click="openExportDialog(row)"
+                />
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -142,16 +180,30 @@
         @current-change="onPageChange"
       />
     </div>
+
+    <!-- 导出格式选择对话框 -->
+    <el-dialog v-model="exportDialogVisible" title="导出查询结果" width="380px">
+      <el-radio-group v-model="exportFormat" class="export-format-group">
+        <el-radio-button value="csv">CSV（通用）</el-radio-button>
+        <el-radio-button value="xlsx">Excel</el-radio-button>
+      </el-radio-group>
+      <div class="export-hint">将导出完整查询结果（最多 1000 行），可能需要几秒</div>
+      <template #footer>
+        <el-button @click="exportDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="exporting" @click="confirmExport">导出</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Refresh } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { Refresh, View, DocumentCopy, Download, Search } from '@element-plus/icons-vue'
+import { ElMessage, ElLoading } from 'element-plus'
 import { queryApi } from '../api/query'
 import { datasetApi } from '../api/dataset'
+import { exportApi, downloadBlob } from '../api/export'
 import { useUserStore } from '../stores/user'
 
 const router = useRouter()
@@ -164,9 +216,67 @@ const page = ref(1)
 const filterDatasetId = ref('')
 const datasetOptions = ref<any[]>([])
 
+// 搜索（防抖，避免每输一个字就请求）
+const searchKeyword = ref('')
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+function onSearchInput() {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    page.value = 1
+    fetchHistory()
+  }, 400)
+}
+
 // 重跑状态：rerunningId 标记哪条正在重跑，rerunResult 存重跑结果
 const rerunningId = ref<string | null>(null)
 const rerunResult = reactive<Record<string, any>>({})
+
+// SQL 展开状态：只展开一行（点击另一行自动收起前一行，类似手风琴）
+const expandedSqlId = ref<string | null>(null)
+
+function toggleSql(id: string) {
+  expandedSqlId.value = expandedSqlId.value === id ? null : id
+}
+
+async function copySql(sql: string) {
+  try {
+    await navigator.clipboard.writeText(sql)
+    ElMessage.success('SQL 已复制')
+  } catch {
+    ElMessage.error('复制失败')
+  }
+}
+
+// 导出：调 /api/export/<id>/<fmt>/，后端内部重跑 SQL 取完整结果（≤1000 行）
+const exportDialogVisible = ref(false)
+const exportFormat = ref<'csv' | 'xlsx'>('csv')
+const exporting = ref(false)
+const exportRow = ref<any>(null)
+
+function openExportDialog(row: any) {
+  exportRow.value = row
+  exportFormat.value = 'csv'
+  exportDialogVisible.value = true
+}
+
+async function confirmExport() {
+  if (!exportRow.value) return
+  exporting.value = true
+  const loading = ElLoading.service({ fullscreen: true, text: '导出中，请稍候...' })
+  try {
+    const res = await exportApi.exportFile(exportRow.value.id, exportFormat.value)
+    const ext = exportFormat.value === 'csv' ? '.csv' : '.xlsx'
+    const filename = `${exportRow.value.dataset_name || 'query'}_result${ext}`
+    downloadBlob(res.data as Blob, filename)
+    ElMessage.success('导出成功')
+    exportDialogVisible.value = false
+  } catch {
+    ElMessage.error('导出失败')
+  } finally {
+    exporting.value = false
+    loading.close()
+  }
+}
 
 onMounted(async () => {
   fetchHistory()
@@ -179,6 +289,7 @@ async function fetchHistory() {
   try {
     const params: any = { page: page.value }
     if (filterDatasetId.value) params.dataset_id = filterDatasetId.value
+    if (searchKeyword.value) params.search = searchKeyword.value
     const res = await queryApi.getHistory(params)
     records.value = res.data.results
     total.value = res.data.count
@@ -231,9 +342,23 @@ function formatTime(t: string) {
 </script>
 
 <style scoped>
+/* 筛选栏：搜索框 + 数据集下拉并排 */
+.filter-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+/* SQL 列：收起态（单行 truncate + 展开按钮）*/
+.sql-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .sql-preview {
-  display: inline-block;
-  max-width: 100%;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -243,10 +368,102 @@ function formatTime(t: string) {
   background: var(--brand-code-bg);
   padding: 2px 8px;
   border-radius: 4px;
+  cursor: pointer;
+}
+
+.sql-toggle {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  font-size: 12px;
+}
+
+/* SQL 列：展开态（完整代码块 + 复制按钮）*/
+.sql-expanded {
+  width: 100%;
+}
+
+.sql-expanded-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.sql-label {
+  font-size: 12px;
+  color: var(--brand-text-tertiary);
+  font-weight: 500;
+}
+
+.sql-expanded-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.sql-code-block {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--brand-code-bg);
+  border-radius: var(--brand-radius-md);
+  font-family: var(--brand-font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--brand-text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* 操作列图标按钮：加大点击热区（方形 36×36）*/
+.action-icon-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: var(--brand-radius-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  transition: background 0.15s ease;
+}
+
+.action-icon-btn:hover {
+  background: var(--brand-primary-light-9);
+}
+
+/* 操作列按钮组：图标按钮紧凑排列 */
+.action-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 导出格式选择对话框 */
+.export-format-group {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.export-format-group :deep(.el-radio-button) {
+  flex: 1;
+}
+
+.export-format-group :deep(.el-radio-button__inner) {
+  width: 100%;
+}
+
+.export-hint {
+  text-align: center;
+  font-size: 12px;
+  color: var(--brand-text-tertiary);
 }
 
 .expand-content {
-  padding: 16px 24px;
+  padding: 16px 20px;
   background: var(--el-fill-color-light);
 }
 
@@ -254,6 +471,8 @@ function formatTime(t: string) {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 12px;
 }
 

@@ -58,15 +58,18 @@ a:hover {
 }
 
 /* 布局工具 */
+/* 左右间距由 .main-content 的 padding-inline 统一控制（避免和此处叠加），
+   此处只管上下间距。调整左右留白改 MainLayout.vue 的 .main-content。 */
 .page-container {
-  padding: var(--space-xl);
+  padding-block: var(--space-lg);
+  padding-inline: 0;
 }
 
 .page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--space-xl);
+  margin-bottom: var(--space-lg);
   gap: var(--space-md);
   flex-wrap: wrap;
 }

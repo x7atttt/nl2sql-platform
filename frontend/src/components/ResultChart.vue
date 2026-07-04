@@ -14,10 +14,10 @@
       <!-- AI 优化状态（仅展开时显示） -->
       <div v-if="showChart" class="chart-toggle-right">
         <span v-if="aiState === 'loading'" class="ai-status loading">
-          <el-icon class="is-loading"><Loading /></el-icon> AI 优化中
+          <el-icon class="is-loading"><Loading /></el-icon> AI 正在为你推荐合适的图表
         </span>
         <span v-else-if="aiState === 'done'" class="ai-status done" title="LLM 智能推荐已应用">
-          ✨ AI 优化
+          ✨ AI已完成图表智能推荐
         </span>
       </div>
     </div>
@@ -240,15 +240,37 @@ function buildCartesianOption(type: 'bar' | 'line' | 'area', x: string, ys: stri
     data: data.map((r) => Number(r[y]) || 0),
     ...(type === 'area' ? { areaStyle: {} } : {}),
     smooth: type === 'line' || type === 'area',
+    // 柱状图：柱子之间留间隙，避免连成一片；barWidth 自适应
+    ...(type === 'bar' ? { barGap: '20%', barCategoryGap: '40%' } : {}),
   }))
+  // 标签过长时截断，避免撑爆 X 轴（商品名/URL 等可达数十字符）
+  const truncateLabel = (val: string) => {
+    const s = String(val ?? '')
+    return s.length > 10 ? s.slice(0, 10) + '…' : s
+  }
   return {
-    tooltip: { trigger: 'axis' },
+    tooltip: {
+      trigger: 'axis',
+      // tooltip 显示完整标签（不被截断）
+      formatter: (params: any) => {
+        const items = Array.isArray(params) ? params : [params]
+        const title = xData[items[0]?.dataIndex] ?? ''
+        return [title, ...items.map((p: any) => `${p.marker} ${p.seriesName}: ${p.value}`)].join('<br/>')
+      },
+    },
     legend: { data: ys, top: 0 },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: {
       type: 'category',
       data: xData,
-      axisLabel: { rotate: xData.length > 8 ? 30 : 0 },
+      // 柱状图：柱子在刻度中间（boundaryGap 默认 true）；折线图：点落在刻度上
+      boundaryGap: type === 'bar',
+      axisLabel: {
+        interval: 0,                          // 强制显示所有标签，不抽稀（修复"标签和柱子对不齐"）
+        rotate: xData.length > 6 || (xData.some((d) => String(d).length > 6)) ? 35 : 0,
+        formatter: truncateLabel,             // 截断长标签，避免重叠
+        hideOverlap: false,                   // 关闭自动隐藏（ECharts 5 默认会隐藏重叠标签）
+      },
     },
     yAxis: { type: 'value' },
     // 数据多时开启横向缩放
@@ -259,16 +281,38 @@ function buildCartesianOption(type: 'bar' | 'line' | 'area', x: string, ys: stri
 
 function buildPieOption(x: string, y: string) {
   const data = displayData.value
+  // 标签截断：商品名/URL 等长标签会撑爆图例，统一截断到 12 字符
+  const truncateName = (val: unknown) => {
+    const s = String(val ?? '')
+    return s.length > 12 ? s.slice(0, 12) + '…' : s
+  }
+  const fullNames = data.map((r) => (x ? formatDimValue(r[x]) : ''))
+  const pieData = data.map((r, i) => ({
+    name: truncateName(fullNames[i]),
+    value: Number(r[y]) || 0,
+  }))
   return {
-    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
-    legend: { type: 'scroll', orient: 'vertical', right: 10, top: 'middle' },
+    tooltip: {
+      trigger: 'item',
+      // tooltip 显示完整名称（不被截断）+ 数值 + 百分比
+      formatter: (p: any) => `${fullNames[p.dataIndex] ?? p.name}: ${p.value} (${p.percent}%)`,
+    },
+    legend: {
+      type: 'scroll',
+      orient: 'vertical',
+      right: 10,
+      top: 'middle',
+      formatter: truncateName,
+    },
     series: [
       {
         type: 'pie',
         radius: ['40%', '70%'],
-        center: ['40%', '50%'],
-        data: data.map((r) => ({ name: x ? formatDimValue(r[x]) : '', value: Number(r[y]) || 0 })),
+        center: ['35%', '50%'],   // 收窄饼图，给右侧图例留更多空间
+        data: pieData,
         emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0,0,0,0.5)' } },
+        // 标签线引导 + 截断标签，避免重叠
+        label: { formatter: '{b}', fontSize: 11 },
       },
     ],
   }
@@ -276,14 +320,34 @@ function buildPieOption(x: string, y: string) {
 
 function buildScatterOption(x: string, y: string) {
   const data = displayData.value
-  // 散点图：x 必须是数值（如果用户选了文本列作 x，自动用索引）
-  const pts = data.map((r) => [x ? Number(r[x]) || 0 : 0, Number(r[y]) || 0])
+  // 散点图要求 X 是数值。若用户选了文本列，所有点会堆在 x=0，
+  // 这里检测并回退为"用索引做 X"，至少能看到 y 值分布（比堆成竖线可读）。
+  let pts: number[][]
+  let xIsNumeric = true
+  if (x) {
+    const numericVals = data.map((r) => Number(r[x]))
+    const validCount = numericVals.filter((v) => !isNaN(v) && isFinite(v)).length
+    // 有效数值占比 < 50% 视为文本列
+    xIsNumeric = validCount > data.length / 2
+  }
+  if (x && xIsNumeric) {
+    pts = data.map((r) => [Number(r[x]) || 0, Number(r[y]) || 0])
+  } else {
+    // X 是文本列或未选：用行索引做 X 轴，避免所有点堆在 x=0
+    pts = data.map((r, i) => [i + 1, Number(r[y]) || 0])
+  }
   return {
     tooltip: {
       trigger: 'item',
-      formatter: (p: any) => `${formatDimValue(data[p.dataIndex]?.[x])}: ${p.value[1]}`,
+      formatter: (p: any) => {
+        const label = x && xIsNumeric ? `${x}=${p.value[0]}` : `#${p.value[0]}`
+        return `${formatDimValue(data[p.dataIndex]?.[x]) ?? label}<br/>${x}: ${p.value[0]}<br/>${y}: ${p.value[1]}`
+      },
     },
-    xAxis: { type: 'value', name: x || 'X' },
+    xAxis: {
+      type: xIsNumeric ? 'value' : 'category',
+      name: xIsNumeric ? (x || 'X') : '行号',
+    },
     yAxis: { type: 'value', name: y },
     series: [{ type: 'scatter', data: pts, symbolSize: 8 }],
   }
