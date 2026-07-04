@@ -32,15 +32,12 @@ class DatasetViewSet(viewsets.ModelViewSet):
         if user.is_admin:
             # admin 看全部（管理需要）
             return Dataset.objects.all().order_by('-created_at')
-        if user.is_analyst:
-            # analyst：自己 owner 的 + 被分享给自己的（与 get_accessible_dataset 口径一致）
-            # 之前只认 owner，导致 analyst 被分享的数据集列表看不到但能查（口径不一致）
-            return Dataset.objects.filter(
-                Q(owner=user) | Q(shares__shared_to=user)
-            ).distinct().order_by('-created_at')
-        # viewer：只看被分享给自己的（严格隔离，不含 owner）
+        # analyst/viewer 统一口径（对标 Tableau：所有权与角色解耦）：
+        # owner 永远能看到自己的数据集 + 被分享给自己的。
+        # 角色区别在"能做什么操作"（create/destroy 走 IsAnalyst），
+        # 不在"能看什么数据"——降级（analyst→viewer）不丢数据访问权。
         return Dataset.objects.filter(
-            shares__shared_to=user
+            Q(owner=user) | Q(shares__shared_to=user)
         ).distinct().order_by('-created_at')
 
     def create(self, request, *args, **kwargs):

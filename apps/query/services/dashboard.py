@@ -40,15 +40,16 @@ def _query_history_queryset(user) -> object:
 def _dataset_queryset(user) -> object:
     """按角色返回可见的 Dataset queryset（dataset_health 用）。
 
-    复用 DatasetViewSet.get_queryset 的三分支逻辑：
-    - admin 全量、analyst owner=self、viewer shares__shared_to=self
+    口径与 DatasetViewSet.get_queryset / visibility.py 一致（对标 Tableau：
+    所有权与角色解耦）——owner 永远可见 + 被分享给自己的。
     """
+    from django.db.models import Q
     if user.is_admin:
         return Dataset.objects.all()
-    if user.is_analyst:
-        return Dataset.objects.filter(owner=user)
-    # viewer：只看被分享给自己的（严格按 DatasetViewSet 口径）
-    return Dataset.objects.filter(shares__shared_to=user).distinct()
+    # analyst/viewer 统一：owner=self 或被分享给自己的
+    return Dataset.objects.filter(
+        Q(owner=user) | Q(shares__shared_to=user)
+    ).distinct()
 
 
 def _build_trend(queryset) -> list[dict]:
