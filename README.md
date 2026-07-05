@@ -10,11 +10,7 @@ Django + Celery + LangChain 构建的自然语言数据查询平台。分析师�
 
 ## 演示
 
-<video controls width="100%" src="assets/demo.mp4" poster="">
-  你的浏览器不支持 video 标签，请下载 <a href="assets/demo.mp4">demo.mp4</a> 查看。
-</video>
-
-> 视频文件较大（约 12 MB），首次加载可能稍慢；GitHub 网页端会自动渲染上方播放器，克隆到本地后用任意播放器打开 `assets/demo.mp4` 即可。
+https://github.com/user-attachments/assets/ea7cecfd-2e31-4646-95ea-25caa2a1219d
 
 ## 功能特性
 
