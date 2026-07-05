@@ -142,7 +142,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
 else:
-    CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', '').split(',')
+    # 过滤掉空值（环境变量未设时 ''.split(',') 返回 ['']，会触发 corsheaders.E013）
+    CORS_ALLOWED_ORIGINS = [
+        origin.strip() for origin in os.environ.get('CORS_ALLOWED_ORIGINS', '').split(',')
+        if origin.strip()
+    ]
 
 # Production security
 if not DEBUG:
