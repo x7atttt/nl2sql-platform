@@ -1,12 +1,9 @@
-# 生产部署：docker compose --env-file .env.production up -d
-# 本地开发：docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
-#
-# 镜像地址走环境变量（ACR_VPC_DOMAIN / ACR_NAMESPACE），仓库里不暴露 ACR 真实域名。
-# 在 .env.production 配置：ACR_VPC_DOMAIN、ACR_NAMESPACE
+# 部署：docker compose --env-file .env.production up -d --build
+# 本地开发：docker compose up -d --build（用默认 .env 或自定义 env-file）
 services:
   django:
     restart: unless-stopped
-    image: ${ACR_VPC_DOMAIN}/${ACR_NAMESPACE}:backend-latest
+    build: .
     # collectstatic 已移到构建期（Dockerfile），启动只跑 migrate
     command: >
       sh -c "python manage.py migrate --noinput &&
@@ -27,7 +24,7 @@ services:
 
   celery-worker:
     restart: unless-stopped
-    image: ${ACR_VPC_DOMAIN}/${ACR_NAMESPACE}:backend-latest
+    build: .
     # concurrency=1：2核2G 服务器，Celery 任务是 pandas/LLM 调用（CPU/内存密集），
     # 多并发会抢内存导致 OOM。10 人并发场景下 LLM 调用是 IO 等待，1 个 worker 进程足够排队处理。
     # max-tasks-per-child=30：执行 30 个任务后子进程重启，释放 pandas/ langchain 累积的内存
@@ -47,7 +44,7 @@ services:
 
   celery-beat:
     restart: unless-stopped
-    image: ${ACR_VPC_DOMAIN}/${ACR_NAMESPACE}:backend-latest
+    build: .
     command: celery -A config beat -l info
     env_file:
       - .env.production
@@ -60,7 +57,9 @@ services:
 
   nginx:
     restart: unless-stopped
-    image: ${ACR_VPC_DOMAIN}/${ACR_NAMESPACE}:frontend-latest
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
       - "80:80"
     volumes:

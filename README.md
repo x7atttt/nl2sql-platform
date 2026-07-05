@@ -41,13 +41,7 @@ Django + Celery + LangChain 构建的自然语言数据查询平台。分析师�
 
 ## 快速开始
 
-### Docker Compose 部署（推荐）
-
-> 推荐配合 [GitHub Actions 自动构建](#cicd-自动部署)：CI 构建镜像推到阿里云 ACR，服务器只 `pull` + `up`，秒级启动（不在 2核服务器上编译，避免 OOM）。
->
-> 如果不用 CI，也可以直接在服务器本地构建（见下方"本地构建"）。
-
-#### 方式一：从 ACR 拉镜像（推荐，配合 GitHub Actions）
+### Docker Compose 部署
 
 ```bash
 # 1. 克隆仓库
@@ -56,23 +50,19 @@ cd nl2sql-platform
 
 # 2. 创建 .env.production 并填入真实值
 cp .env.production.example .env.production
-# 编辑：DJANGO_SECRET_KEY、DB_PASSWORD、LLM_API_KEY（DeepSeek）、EMBEDDING_API_KEY（智谱）、
-#        ALLOWED_HOSTS、ACR_VPC_DOMAIN、ACR_NAMESPACE
+# 编辑：DJANGO_SECRET_KEY、DB_PASSWORD、LLM_API_KEY（DeepSeek）、EMBEDDING_API_KEY（智谱）、ALLOWED_HOSTS
 
 # ⚠️ PostgreSQL 需 pgvector 扩展（few-shot 语义检索依赖）
 #    docker-compose.yml 已用 pgvector/pgvector:pg15 镜像（预装 vector 扩展二进制），
 #    migrate 时会自动 CREATE EXTENSION vector（迁移内置 RunSQL，幂等）
 
-# 3. 登录阿里云 ACR（用 VPC 内网地址，不耗公网流量）
-docker login <你的ACR_VPC_DOMAIN> -u <阿里云账号>
+# 3. 构建并启动（首次会构建镜像，约 5-10 分钟）
+docker compose --env-file .env.production up -d --build
 
-# 4. 拉取镜像并启动
-docker compose --env-file .env.production up -d
-
-# 5. 创建管理员账号
+# 4. 创建管理员账号
 docker compose exec -it django python manage.py createsuperuser
 
-# 6. 设置管理员角色
+# 5. 设置管理员角色
 docker compose exec django python manage.py shell -c "
 from apps.users.models import User
 u = User.objects.first()
@@ -80,19 +70,10 @@ u.role = 'admin'
 u.save()
 "
 
-# 7. 访问 http://你的服务器IP
+# 6. 访问 http://你的服务器IP（本地部署则访问 http://localhost）
 ```
 
-#### 方式二：服务器本地构建（不用 CI，2核2G 可能 OOM）
-
-```bash
-git clone https://github.com/x7atttt/nl2sql-platform.git
-cd nl2sql-platform
-cp .env.production.example .env.production  # 填入真实值
-
-# 用 local 覆盖文件（build 替代 ACR 拉取），不需要 ACR 环境变量
-docker compose -f docker-compose.yml -f docker-compose.local.yml --env-file .env.production up -d --build
-```
+> 2核2G 服务器构建可能 OOM，建议先加 swap：`sudo fallocate -l 1G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile`
 
 ### 本地开发
 
@@ -110,9 +91,11 @@ celery -A config beat -l info
 
 # 前端
 cd frontend
-npm install --legacy-peer-deps
-npm run dev    # http://localhost:5173
+pnpm install
+pnpm run dev    # http://localhost:5173
 ```
+
+> ⚠️ **必须同时启动 3 个终端**：daphne（HTTP + WS）+ celery worker（异步任务）+ vite dev（前端）。少起任何一个都会导致功能异常。
 
 > ⚠️ **必须同时启动 3 个终端**：daphne（HTTP + WS）+ celery worker（异步任务）+ vite dev（前端）。少起任何一个都会导致功能异常。
 
@@ -156,8 +139,7 @@ npm run dev    # http://localhost:5173
 ├── nginx/
 │   └── nginx.conf           # 反向代理配置（含 WebSocket + 大文件上传）
 ├── .github/workflows/       # GitHub Actions（构建镜像推阿里云 ACR）
-├── docker-compose.yml       # 生产部署（从 ACR 拉镜像）
-├── docker-compose.local.yml # 本地开发覆盖（build 替代 ACR）
+├── docker-compose.yml       # 6 个服务（django/celery-worker/celery-beat/nginx/db/redis）
 ├── .env.production.example  # 环境变量模板（占位符，复现用）
 ├── Dockerfile               # 后端镜像（BuildKit cache + collectstatic 构建期）
 └── requirements.txt         # Python 依赖
@@ -225,82 +207,6 @@ npm run dev    # http://localhost:5173
 
 数据可见性统一口径（`apps/datasets/services/visibility.py`）：admin 看全部，analyst/viewer 看 owner=self 或被分享给自己的。**所有权与角色解耦**——owner 永远能访问自己的数据（无论当前角色），对标 Tableau：角色决定"能做什么操作"，所有权决定"拥有什么资源"，降级不丢数据访问权。撤销分享后历史 QueryHistory 仍存在，但 rerun/export/chart 接口实时复检可见性，不可见返回 403。
 
-## 关键设计决策
-
-- **数据集分享**：DatasetShare 模型 + 唯一约束，分析师分享数据集给指定用户（数据集级授权），对齐 Superset/Metabase 的 Viewer 机制
-- **上传规模上限**：三道规模上限保护——文件 50MB（业务层校验，与 Nginx 对齐）、行数 10 万、列数 100，超限自动清理 dataset 记录
-- **幂等上传**：Redis SETNX 锁 + 数据库 `(owner, file_md5)` 唯一约束
-- **查询历史预览**：持久化前 20 行结果预览（~10KB/条，相比完整结果降低 50 倍存储），支持一键重跑历史 SQL 获取完整结果
-- **Celery 可靠性**：`acks_late=True`、指数退避重试（最多 5 次）、失败入死信队列，`visibility_timeout=12h` 防 acks_late 重复执行
-- **NL2SQL 流水线**：7 步工作流 + 三层 SQL 安全校验，失败自动重试（最多 3 次），自动加 LIMIT 1000，ORDER BY NULLS LAST
-- **Few-shot 语义检索**：pgvector 同库扩展而非独立向量库（ChromaDB）——embedding 与 QueryHistory 同库事务一致，万级以下场景 HNSW 索引 <5ms，零新依赖
-- **Schema 发现 Redis 缓存**：数据集是"上传快照"模式不变则 schema 也不变，TTL 7 天 + 主动失效，二次查询省 90%+ 成本；业务说明独立注入不进缓存（改它不触发 schema 重算）
-- **查询结果可视化选型**：规则引擎按列类型组合自动选图表（日期+数值→折线，文本+数值≤7类→饼图等），信任 SQL 语义不二次聚合，明细数据（行数 >50 且列数 >4）护栏提示
-- **LLM 智能图表推荐**：参考 LIDA Summary 模式（统计摘要而非全量数据进 prompt）+ Vanna 三要素（question + sql + df 元数据），LLM 只输出"选型建议"（chartType + xField + yFields + reason），不输出完整 ECharts option——前者失败可降级到规则引擎，后者失败图表空白
-- **搜索过滤**：DRF SearchFilter（数据集列表搜 name + business_description，OR 匹配）+ 手写 icontains（查询历史搜 question），前端 400ms 防抖
-- **Dashboard BI 概览**：分层视角对标 Power BI workspace 角色模型（admin 全平台运营 / 普通用户个人面板），TruncDate 显式传 Asia/Shanghai 时区避免 UTC 切日偏移，success_rate Python 层算防除零
-- **前端主题**：CSS 自定义属性 + Element Plus 变量覆盖，零额外依赖
-- **Element Plus 按需引入**：手动注册（app.use 触发组件 install 自动注册内部子组件），不用 unplugin 自动按需——后者只解析模板顶层标签，会漏掉 el-tabs 内部子组件 TabNavRenderer 导致渲染崩溃；体积比全量引入减少 47%（gzip 312KB → 165KB）
-
-## CI/CD 自动部署
-
-通过 GitHub Actions 在 CI runner（2 vCPU / 7GB RAM）上构建镜像，推到阿里云 ACR，服务器只 `docker pull` + `docker compose up`，秒级启动。**避免在 2核2G 服务器上编译**（pandas/langchain wheel 解压 + vite build 内存峰值 1.5-2GB，极易 OOM）。
-
-### 工作流（`.github/workflows/docker-deploy.yml`）
-
-- **触发**：push 到 `main` 分支自动构建，或 Actions 页面手动触发
-- **并行构建**：backend（Django + Celery 共用一个镜像）+ frontend（Nginx）两个 job 同时跑
-- **缓存**：`cache-from/cache-to: type=gha`，二次构建复用 pip/pnpm 下载缓存
-- **Tag 策略**：每次构建推两个 tag——`{tag}-latest`（服务器默认拉这个）+ `{tag}-{commit sha}`（版本回滚用）
-
-### 配置步骤（一次性）
-
-**1. 阿里云 ACR**
-- 创建个人版容器镜像服务（免费）
-- 创建命名空间 + 镜像仓库（如 `your-namespace/nl2sql`）
-- 记下公网地址、VPC 地址、用户名
-
-**2. GitHub Secrets**（仓库 Settings → Secrets and variables → Actions）
-
-| Secret 名 | 值 | 用途 |
-|---|---|---|
-| `ACR_REGISTRY` | ACR 公网地址（如 `crpi-xxxxx.cn-guangzhou.personal.cr.aliyuncs.com`） | Actions 推送镜像 |
-| `ACR_NAMESPACE` | 命名空间/仓库名（如 `your-namespace/nl2sql`） | 镜像 tag 前缀 |
-| `ACR_USERNAME` | 阿里云账号全名 | 登录 ACR |
-| `ACR_PASSWORD` | ACR 访问凭证密码（开通时设置） | 登录 ACR |
-
-**3. 服务器配置**（广州 ECS，用 VPC 内网拉镜像）
-```bash
-# 登录 ACR（VPC 内网地址，秒级拉取不耗公网流量）
-docker login <你的ACR_VPC_DOMAIN> -u <阿里云账号>
-
-# clone 仓库（只需 docker-compose.yml + nginx.conf + .env.production.example）
-git clone https://github.com/x7atttt/nl2sql-platform.git
-cd nl2sql-platform
-
-# 配置环境变量
-cp .env.production.example .env.production
-# 编辑：填入 DeepSeek/智谱 API Key、DB 密码、ACR_VPC_DOMAIN、ACR_NAMESPACE、ALLOWED_HOSTS
-```
-
-### 日常部署（push main 后自动）
-
-```bash
-# GitHub Actions 自动构建推 ACR（约 5-8 分钟，CI runner 7GB 内存不 OOM）
-# 服务器只需：
-docker compose --env-file .env.production pull && docker compose --env-file .env.production up -d
-# VPC 内网拉镜像秒级完成，服务器零编译
-```
-
-### 关键设计
-
-- **镜像地址走环境变量**：`docker-compose.yml` 用 `${ACR_VPC_DOMAIN}/${ACR_NAMESPACE}:backend-latest`，仓库里不暴露 ACR 真实域名（公开仓库安全）
-- **本地构建覆盖**：`docker-compose.local.yml` 让本地开发用 `build` 替代 ACR 拉取，不需要 ACR 环境
-- **BuildKit cache mount**：Dockerfile 用 `--mount=type=cache` 持久化 pip/pnpm 缓存，CI 和本地都受益
-- **collectstatic 移构建期**：不在每次启动跑，启动更快
-
----
-
 ## 参考项目
 
 本项目在算法层和产品形态上借鉴了以下开源项目（代码独立实现，未直接复制）：
@@ -336,9 +242,6 @@ docker compose --env-file .env.production pull && docker compose --env-file .env
 | `EMBEDDING_API_KEY` | 是 | **智谱 API Key**（few-shot 语义检索的问题向量化，embedding-3 1024 维），[获取](https://open.bigmodel.cn/usercenter/apikeys) |
 | `EMBEDDING_API_BASE` | 是 | `https://open.bigmodel.cn/api/paas/v4`（智谱 OpenAI 兼容协议） |
 | `ALLOWED_HOSTS` | 是 | 逗号分隔的域名/IP 列表 |
-| `ACR_VPC_DOMAIN` | 否 | 阿里云 ACR VPC 内网地址（仅 docker compose 生产部署用，[见 CI/CD 章节](#cicd-自动部署)） |
-| `ACR_NAMESPACE` | 否 | 阿里云 ACR 命名空间/仓库名（同上） |
-| `ACR_REGISTRY` | 否 | 阿里云 ACR 公网地址（仅 GitHub Actions 推送用，配在仓库 Secrets 里） |
 
 > **为什么 LLM 和 Embedding 用两个供应商？** DeepSeek 性价比高（NL2SQL 主链路），但不提供 embedding 接口；智谱 embedding-3（1024 维）用于 few-shot 语义检索。两个服务独立配置，互不干扰——这也是工程上的解耦，未来换任一供应商都不影响另一条链路。
 
