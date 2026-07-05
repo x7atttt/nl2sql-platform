@@ -8,6 +8,14 @@ Django + Celery + LangChain 构建的自然语言数据查询平台。分析师�
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
+## 演示
+
+<video controls width="100%" src="assets/demo.mp4" poster="">
+  你的浏览器不支持 video 标签，请下载 <a href="assets/demo.mp4">demo.mp4</a> 查看。
+</video>
+
+> 视频文件较大（约 12 MB），首次加载可能稍慢；GitHub 网页端会自动渲染上方播放器，克隆到本地后用任意播放器打开 `assets/demo.mp4` 即可。
+
 ## 功能特性
 
 - **数据集管理**：分析师上传 CSV/Excel 文件，异步解析入库，WebSocket 实时推送处理进度；支持批量上传（最多 10 个文件，单个串行处理）；三道规模上限保护（文件 50MB / 行数 10 万 / 列数 100）
