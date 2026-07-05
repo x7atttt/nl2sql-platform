@@ -18,6 +18,7 @@ services:
       - "8000"
     env_file:
       - .env.production
+    mem_limit: 384m    # django（daphne）实际占 ~130MB，限制 384M 留余量给请求处理
     depends_on:
       db:
         condition: service_healthy
@@ -27,11 +28,17 @@ services:
   celery-worker:
     restart: unless-stopped
     image: ${ACR_VPC_DOMAIN}/${ACR_NAMESPACE}:backend-latest
-    command: celery -A config worker -l info --concurrency=2 --max-tasks-per-child=100
+    # concurrency=1：2核2G 服务器，Celery 任务是 pandas/LLM 调用（CPU/内存密集），
+    # 多并发会抢内存导致 OOM。10 人并发场景下 LLM 调用是 IO 等待，1 个 worker 进程足够排队处理。
+    # max-tasks-per-child=30：执行 30 个任务后子进程重启，释放 pandas/ langchain 累积的内存
+    #（这些库加载后常驻 ~120MB，任务处理会缓慢增长，定期回收防泄漏）
+    # --max-memory-per-child=200000：单子进程内存超 200MB 强制重启（KB 单位，兜底防线）
+    command: celery -A config worker -l info --concurrency=1 --max-tasks-per-child=30 --max-memory-per-child=200000
     volumes:
       - media_data:/app/media
     env_file:
       - .env.production
+    mem_limit: 512m    # celery worker 加载 pandas/langchain ~120MB，处理大文件时峰值更高，给 512M
     depends_on:
       db:
         condition: service_healthy
@@ -44,6 +51,7 @@ services:
     command: celery -A config beat -l info
     env_file:
       - .env.production
+    mem_limit: 256m    # beat 只调度不执行任务，内存占用低，256M 足够
     depends_on:
       django:           # 修复：beat 依赖 django_celery_beat 迁移表，需等 django migrate 完成
         condition: service_started
@@ -59,6 +67,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - static_data:/app/staticfiles:ro
       - media_data:/app/media:ro
+    mem_limit: 64m     # nginx:alpine 实际占 ~20MB，64M 足够
     depends_on:
       - django
 
@@ -70,10 +79,16 @@ services:
       POSTGRES_DB: ${DB_NAME:-data_platform}
       POSTGRES_USER: ${DB_USER:-data_platform_user}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    # 2核2G 服务器内存优化：限制 PG 连接数和共享内存
+    # max_connections=30：10 人并发最多 ~10 连接（django+celery），30 留余量
+    # shared_buffers=128MB：PG 缓冲池，2G 服务器给 128MB 合适（默认也是 128MB）
+    # work_mem=4MB：每连接排序/哈希内存，降低防并发时 OOM
+    command: postgres -c max_connections=30 -c shared_buffers=128MB -c work_mem=4MB
     volumes:
       - postgres_data:/var/lib/postgresql/data
     expose:
       - "5432"
+    mem_limit: 384m    # PG 实际占 ~150-200MB，限制 384M 留余量，超了重启而非 OOM 整机
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-data_platform_user}"]
       interval: 5s
@@ -83,10 +98,14 @@ services:
   redis:
     restart: unless-stopped
     image: redis:7-alpine
+    # maxmemory=64mb：Redis 只存 Celery broker + schema 缓存，64MB 足够
+    # allkeys-lru：超内存时 LRU 淘汰，不会 OOM
+    command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru
     expose:
       - "6379"
     volumes:
       - redis_data:/data
+    mem_limit: 96m
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
