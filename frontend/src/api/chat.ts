@@ -16,6 +16,16 @@ export interface ChatFrame {
   message_id?: number
   success?: boolean
   execution_time_ms?: number
+  trace_id?: string
+}
+
+export interface TraceSpanItem {
+  span_type: string
+  name: string
+  status: 'ok' | 'error'
+  duration_ms: number
+  attributes: Record<string, unknown> | null
+  created_at: string
 }
 
 export interface ConversationItem {
@@ -65,6 +75,12 @@ export const chatApi = {
 
   removeConversation(id: string) {
     return request.delete(`/api/query/chat/conversations/${id}/`)
+  },
+
+  /** 回答过程追溯（按 assistant 消息 id 拉取 span 时间线） */
+  getTrace(messageId: number) {
+    return request.get<{ trace_id: string | null; spans: TraceSpanItem[] }>(
+      `/api/query/chat/messages/${messageId}/trace/`)
   },
 
   /**

@@ -15,7 +15,7 @@ from django.db import close_old_connections
 
 from apps.datasets.models import Dataset
 from apps.datasources.models import ExternalDataSource
-from apps.query.models import Conversation, ChatMessage
+from apps.query.models import Conversation, ChatMessage, TraceSpan
 from apps.query.services.chat import ChatService
 
 
@@ -121,6 +121,34 @@ class ChatConversationDetailView(APIView):
             return Response({'error': '会话不存在'}, status=status.HTTP_404_NOT_FOUND)
         conv.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ChatTraceView(APIView):
+    """回答过程追溯：按 assistant 消息 id 拉取该轮的 span 时间线。"""
+
+    def get(self, request, message_id):
+        msg = ChatMessage.objects.filter(
+            id=message_id, conversation__user=request.user,
+            role='assistant',
+        ).first()
+        if msg is None:
+            return Response({'error': '消息不存在'}, status=status.HTTP_404_NOT_FOUND)
+        trace_id = (msg.extra or {}).get('trace_id')
+        if not trace_id:
+            return Response({'trace_id': None, 'spans': []})
+        spans = TraceSpan.objects.filter(trace_id=trace_id)
+        return Response({
+            'trace_id': trace_id,
+            'spans': [
+                {
+                    'span_type': s.span_type, 'name': s.name,
+                    'status': s.status, 'duration_ms': s.duration_ms,
+                    'attributes': s.attributes,
+                    'created_at': s.created_at.isoformat(),
+                }
+                for s in spans
+            ],
+        })
 
 
 class ChatMessageStreamView(APIView):

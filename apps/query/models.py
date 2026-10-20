@@ -65,6 +65,44 @@ class QueryHistory(models.Model):
         ]
 
 
+class TraceSpan(models.Model):
+    """可追溯 span：一轮对话/查询的每个关键步骤（LLM 调用/校验/执行/向量化）一条记录。
+
+    trace_id 由 ChatService 每轮生成，写入 assistant 消息 extra.trace_id，
+    前端"过程"Tab 按 trace_id 拉时间线。参考 DB-GPT 的 trace_id 贯穿设计，
+    但用轻量表存储替代 OpenTelemetry 全家桶（项目规模不需要跨服务传播）。
+    """
+    id = models.BigAutoField(primary_key=True)
+    trace_id = models.UUIDField(verbose_name='追溯ID', db_index=True)
+    span_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('llm', 'LLM 调用'),
+            ('sql_validate', 'SQL 校验'),
+            ('sql_execute', 'SQL 执行'),
+            ('embed', '向量化'),
+            ('materialize', '数据物化'),
+            ('skill', '技能'),
+        ],
+        verbose_name='步骤类型',
+    )
+    name = models.CharField(max_length=100, verbose_name='步骤名')
+    status = models.CharField(max_length=10,
+                              choices=[('ok', '成功'), ('error', '失败')],
+                              verbose_name='状态')
+    duration_ms = models.IntegerField(verbose_name='耗时(ms)')
+    # 摘要属性（不含完整 prompt，防膨胀与敏感信息）：模型名/prompt 字符数/
+    # token 用量/SQL/重试轮次/错误信息等
+    attributes = models.JSONField(null=True, blank=True, verbose_name='属性摘要')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'trace_spans'
+        verbose_name = '追溯Span'
+        verbose_name_plural = verbose_name
+        ordering = ['id']
+
+
 class Conversation(models.Model):
     """对话会话：产品主交互单元（chat_file 绑定文件数据集 / chat_db 绑定外部数据源）。
 

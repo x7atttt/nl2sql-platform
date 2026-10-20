@@ -26,6 +26,7 @@ from apps.query.services.nl2sql import (
     execute_select_sql, validate_select_sql, add_limit_clause, clean_sql,
     _sanitize_for_json,
 )
+from apps.query.services.trace import new_trace_id, span
 
 
 def _escape_braces(s: str) -> str:
@@ -135,11 +136,14 @@ class ChatService:
         # 本轮待处理的用户消息 id：组装上下文时排除（问题已在 human 消息里，
         # 再进 chat_history 会重复一遍）
         self._pending_user_msg_id = None
+        # 本轮 trace_id（stream() 入口生成；None 时埋点跳过，供无 trace 场景直调）
+        self._trace_id = None
         self.llm = ChatOpenAI(
             model=settings.LLM_MODEL,
             temperature=0,
             openai_api_key=settings.LLM_API_KEY,
             openai_api_base=settings.LLM_API_BASE,
+            stream_usage=True,  # 流式最后一帧带 token 用量，进 trace 属性
         )
 
     # ===== 上下文组装 =====
@@ -188,7 +192,10 @@ class ChatService:
         base = (base.filter(dataset=self.dataset) if self.dataset
                 else base.filter(source=self.source))
 
-        question_vec = embed_question(question) if question else None
+        question_vec = None
+        # 注：此 span 嵌套在 llm span 内（prompt 组装阶段），时间线按完成顺序展示
+        with span(self._trace_id, 'embed', 'few-shot 问题向量化'):
+            question_vec = embed_question(question) if question else None
         if question_vec is not None:
             cases = list(
                 base.filter(question_embedding__isnull=False)
@@ -233,18 +240,30 @@ class ChatService:
     def _stream_generate(self, question: str):
         """首次生成：流式。逐帧产出 delta，返回完整输出（经 yield from 取回）。"""
         chunks = []
-        for chunk in self.llm.stream(self._build_messages(question)):
-            if chunk.content:
-                chunks.append(chunk.content)
-                yield {'type': 'delta', 'content': chunk.content}
+        usage = None
+        with span(self._trace_id, 'llm', '生成SQL(流式)',
+                  model=settings.LLM_MODEL, attempt=0) as s:
+            prompt = self._build_messages(question)
+            s.attrs['prompt_chars'] = sum(len(m.content) for m in prompt.to_messages())
+            for chunk in self.llm.stream(prompt):
+                if chunk.content:
+                    chunks.append(chunk.content)
+                    yield {'type': 'delta', 'content': chunk.content}
+                if getattr(chunk, 'usage_metadata', None):
+                    usage = chunk.usage_metadata
+            if usage:
+                s.attrs['prompt_tokens'] = usage.get('input_tokens')
+                s.attrs['completion_tokens'] = usage.get('output_tokens')
         return ''.join(chunks)
 
     def _regenerate(self, question: str, failed_output: str, error_msg: str) -> str:
         """修复重试：不流式（重试对用户是黑盒，只有最终结果可见）。"""
-        messages = self._build_messages(question, fix={
-            'failed_output': failed_output, 'error_msg': error_msg,
-        })
-        return clean_sql(self.llm.invoke(messages).content)
+        with span(self._trace_id, 'llm', '修复重试',
+                  model=settings.LLM_MODEL, reason=error_msg[:120]):
+            messages = self._build_messages(question, fix={
+                'failed_output': failed_output, 'error_msg': error_msg,
+            })
+            return clean_sql(self.llm.invoke(messages).content)
 
     @staticmethod
     def _parse_result(text: str) -> dict:
@@ -291,7 +310,7 @@ class ChatService:
                         success, error='', columns=None, column_types=None,
                         rows=None, row_count=0):
         extra = {'sql': parsed.get('sql'), 'chart_type': parsed.get('chart_type'),
-                 'success': success}
+                 'success': success, 'trace_id': self._trace_id}
         if error:
             extra['error'] = error
         if success and parsed.get('sql'):
@@ -306,10 +325,11 @@ class ChatService:
         question_embedding = None
         if success:
             from apps.query.services.embedding import embed_question
-            try:
-                question_embedding = embed_question(question)
-            except Exception:
-                logger.warning('chat: embedding 生成失败，历史照常落库')
+            with span(self._trace_id, 'embed', '历史问题向量化'):
+                try:
+                    question_embedding = embed_question(question)
+                except Exception:
+                    logger.warning('chat: embedding 生成失败，历史照常落库')
         QueryHistory.objects.create(
             dataset=self.dataset, source=self.source,
             user=self.conversation.user,
@@ -332,7 +352,7 @@ class ChatService:
         return [
             {'type': 'error', 'message': error},
             {'type': 'done', 'message_id': assistant.id, 'success': False,
-             'execution_time_ms': elapsed_ms},
+             'execution_time_ms': elapsed_ms, 'trace_id': self._trace_id},
         ]
 
     # ===== 主流程 =====
@@ -344,6 +364,7 @@ class ChatService:
         （不流式），重试预算 MAX_RETRIES。所有路径最终以 done 帧收尾。
         """
         start_time = time.time()
+        self._trace_id = new_trace_id()
 
         round_index = (ChatMessage.objects.filter(
             conversation=self.conversation
@@ -380,11 +401,14 @@ class ChatService:
             assistant = self._save_assistant(round_index, parsed, elapsed, success=True)
             yield {'type': 'answer', **parsed}
             yield {'type': 'done', 'message_id': assistant.id, 'success': True,
-                   'execution_time_ms': elapsed}
+                   'execution_time_ms': elapsed, 'trace_id': self._trace_id}
             return
 
         # 3. 只读校验（失败不重试——与现有查询路径行为一致）
-        if not self._validate(parsed['sql']):
+        with span(self._trace_id, 'sql_validate', '只读校验') as s:
+            valid = self._validate(parsed['sql'])
+            s.attrs['passed'] = valid
+        if not valid:
             elapsed = int((time.time() - start_time) * 1000)
             yield from self._fail(
                 round_index, question, parsed, elapsed,
@@ -397,7 +421,11 @@ class ChatService:
         rows = column_types = None
         for attempt in range(self.MAX_RETRIES + 1):
             try:
-                rows, column_types = self._execute(sql)
+                with span(self._trace_id, 'sql_execute', '执行SQL', attempt=attempt,
+                          engine=('platform' if self.dataset
+                                  else self.source.db_type)) as s:
+                    rows, column_types = self._execute(sql)
+                    s.attrs['rows'] = len(rows)
                 break
             except Exception as e:
                 logger.warning('chat SQL 执行失败 (尝试 %d/%d): %s',
@@ -430,4 +458,4 @@ class ChatService:
         yield {'type': 'view', 'columns': columns, 'column_types': column_types,
                'rows': view_rows, 'row_count': len(rows)}
         yield {'type': 'done', 'message_id': assistant.id, 'success': True,
-               'execution_time_ms': elapsed}
+               'execution_time_ms': elapsed, 'trace_id': self._trace_id}

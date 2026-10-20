@@ -25,6 +25,7 @@ import { ElContainer } from 'element-plus/es/components/container/index'
 import { ElDialog } from 'element-plus/es/components/dialog/index'
 import { ElDropdown } from 'element-plus/es/components/dropdown/index'
 import { ElEmpty } from 'element-plus/es/components/empty/index'
+import { ElTimeline } from 'element-plus/es/components/timeline/index'
 import { ElForm } from 'element-plus/es/components/form/index'
 import { ElIcon } from 'element-plus/es/components/icon/index'
 import { ElInput } from 'element-plus/es/components/input/index'
@@ -54,6 +55,8 @@ import 'element-plus/es/components/dialog/style/css'
 import 'element-plus/es/components/dropdown/style/css'
 import 'element-plus/es/components/dropdown-item/style/css'
 import 'element-plus/es/components/dropdown-menu/style/css'
+import 'element-plus/es/components/timeline/style/css'
+import 'element-plus/es/components/timeline-item/style/css'
 import 'element-plus/es/components/empty/style/css'
 import 'element-plus/es/components/form/style/css'
 import 'element-plus/es/components/form-item/style/css'
@@ -122,6 +125,7 @@ const elementPlugins = [
   ElDialog,
   ElDropdown,      // 自动注册 ElDropdownItem/ElDropdownMenu
   ElEmpty,
+  ElTimeline,     // 自动注册 ElTimelineItem
   ElForm,          // 自动注册 ElFormItem
   ElIcon,
   ElInput,

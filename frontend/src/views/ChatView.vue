@@ -80,8 +80,12 @@
                     :closable="false"
                     show-icon
                   />
-                  <!-- 结果卡片：图表 / 数据 / SQL -->
-                  <el-tabs v-if="msg.extra?.rows?.length" class="result-tabs">
+                  <!-- 结果卡片：图表 / 数据 / SQL / 过程 -->
+                  <el-tabs
+                    v-if="msg.extra?.rows?.length"
+                    class="result-tabs"
+                    @tab-change="(name: string | number) => name === 'trace' && loadTrace(msg.id as number)"
+                  >
                     <el-tab-pane label="图表">
                       <ResultChart
                         v-if="chartKindOf(msg.extra.chart_type)"
@@ -114,6 +118,26 @@
                           复制
                         </el-button>
                       </div>
+                    </el-tab-pane>
+                    <el-tab-pane v-if="typeof msg.id === 'number'" name="trace">
+                      <template #label>过程</template>
+                      <el-timeline v-if="traceOf(msg.id)?.length" class="trace-timeline">
+                        <el-timeline-item
+                          v-for="(s, i) in traceOf(msg.id)"
+                          :key="i"
+                          :type="s.status === 'error' ? 'danger' : 'success'"
+                          :timestamp="`${s.duration_ms}ms`"
+                        >
+                          <span class="trace-name">{{ s.name }}</span>
+                          <el-tag size="small" :type="s.status === 'error' ? 'danger' : 'success'">
+                            {{ s.status === 'error' ? '失败' : '成功' }}
+                          </el-tag>
+                          <div v-if="s.attributes" class="trace-attrs">
+                            <span v-for="(v, k) in s.attributes" :key="k">{{ k }}: {{ v }}</span>
+                          </div>
+                        </el-timeline-item>
+                      </el-timeline>
+                      <div v-else class="no-chart-hint">{{ traceLoading ? '加载中…' : '暂无过程数据' }}</div>
                     </el-tab-pane>
                   </el-tabs>
                 </template>
@@ -203,7 +227,7 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ChatDotRound, CopyDocument, Delete, Plus } from '@element-plus/icons-vue'
 import ResultChart from '../components/ResultChart.vue'
-import { chatApi, type ChatMessageItem, type ConversationItem } from '../api/chat'
+import { chatApi, type ChatMessageItem, type ConversationItem, type TraceSpanItem } from '../api/chat'
 import { datasetApi } from '../api/dataset'
 import { datasourceApi } from '../api/datasource'
 
@@ -246,6 +270,27 @@ const sourceOptions = ref<{ id: string; name: string; db_type: string }[]>([])
 
 function chartKindOf(t?: string | null) {
   return t ? CHART_KIND[t] ?? null : null
+}
+
+// 回答过程追溯（"过程"Tab 懒加载）
+const traceCache = ref<Record<number, TraceSpanItem[]>>({})
+const traceLoading = ref(false)
+
+function traceOf(id: number) {
+  return traceCache.value[id]
+}
+
+async function loadTrace(id: number) {
+  if (!id || traceCache.value[id]) return
+  traceLoading.value = true
+  try {
+    const res = await chatApi.getTrace(id)
+    traceCache.value[id] = res.data.spans
+  } catch {
+    traceCache.value[id] = []
+  } finally {
+    traceLoading.value = false
+  }
 }
 
 function scrollToBottom() {
@@ -358,7 +403,9 @@ async function send() {
       onError: (message) => {
         pending.extra = { ...(pending.extra || {}), success: false, error: message }
       },
-      onDone: () => {
+      onDone: (frame) => {
+        // 换成真实消息 id：过程 Tab 的 trace 拉取要用它
+        if (frame.message_id) pending.id = frame.message_id
         pending.streaming = false
         streaming.value = false
         scrollToBottom()
@@ -630,6 +677,25 @@ onMounted(loadConversations)
   white-space: pre-wrap;
   word-break: break-all;
   margin: 0;
+}
+
+/* 过程追溯时间线 */
+.trace-timeline {
+  padding: 4px 4px 0;
+}
+
+.trace-name {
+  font-size: 13px;
+  margin-right: 8px;
+}
+
+.trace-attrs {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
 }
 
 /* ===== 输入区 ===== */
