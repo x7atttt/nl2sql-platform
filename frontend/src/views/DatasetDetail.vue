@@ -83,7 +83,21 @@
 
       <el-tab-pane label="自然语言查询" name="query">
         <div class="query-workspace">
-          <!-- AI 推荐查询：上传后自动生成 4 条，点击只填入查询框不执行 -->
+          <!-- 查询交互已统一到 AI 对话页（流式回答/多轮/过程追溯），此处为入口 -->
+          <div class="chat-entry-card page-section">
+            <div class="sq-header">
+              <el-icon class="sq-icon"><MagicStick /></el-icon>
+              <span class="sq-title">在 AI 对话中查询这个数据集</span>
+            </div>
+            <p class="chat-entry-desc">
+              支持流式回答、多轮追问、图表/数据/SQL/过程追溯——比单次查询更适合探索数据。
+            </p>
+            <el-button type="primary" size="large" round @click="goChat()">
+              <el-icon style="margin-right: 6px"><ChatDotRound /></el-icon>
+              开始 AI 对话
+            </el-button>
+          </div>
+
           <div
             v-if="dataset.suggested_questions && dataset.suggested_questions.length > 0"
             class="suggested-questions page-section"
@@ -97,97 +111,11 @@
                 v-for="(q, i) in dataset.suggested_questions"
                 :key="i"
                 class="sq-card"
-                :class="{ active: question === q }"
-                @click="question = q"
+                @click="goChat(q)"
               >
                 {{ q }}
               </button>
             </div>
-          </div>
-
-          <div class="query-input-card page-section">
-            <el-input
-              v-model="question"
-              placeholder="用自然语言查询数据..."
-              size="large"
-              @keyup.enter="handleQuery"
-              :disabled="queryLoading"
-            >
-              <template #append>
-                <el-button :icon="Search" :loading="queryLoading" @click="handleQuery" />
-              </template>
-            </el-input>
-          </div>
-
-          <!-- AI 思考动画：紧贴输入框下方的轻量提示条，不占独立卡片块避免被挤出可视区 -->
-          <div v-if="queryLoading" class="thinking-inline">
-            <div class="thinking-dots">
-              <span class="dot"></span>
-              <span class="dot"></span>
-              <span class="dot"></span>
-            </div>
-            <span class="thinking-text">{{ thinkingText }}</span>
-          </div>
-
-          <div v-if="queryResult && !queryLoading" class="result-section">
-            <div v-if="queryResult.success" class="result-success">
-              <div class="result-header">
-                <span>查询到 <strong>{{ queryResult.row_count }}</strong> 条数据，耗时 {{ queryResult.execution_time_ms }}ms</span>
-              </div>
-
-              <div class="result-table-wrapper">
-                <el-table
-                  :data="queryResult.data"
-                  stripe border size="small"
-                  max-height="400"
-                >
-                  <el-table-column
-                    v-for="col in resultColumns"
-                    :key="col"
-                    :prop="col"
-                    :label="col"
-                    min-width="120"
-                    show-overflow-tooltip
-                  />
-                </el-table>
-              </div>
-
-              <div class="sql-block">
-                <div class="sql-block-header">
-                  <span>SQL</span>
-                  <el-button text size="small" @click="copySql">
-                    <el-icon><DocumentCopy /></el-icon> 复制
-                  </el-button>
-                </div>
-                <pre>{{ queryResult.sql }}</pre>
-              </div>
-
-              <!-- 查询结果自动可视化（规则引擎先画默认图 + 后台异步调 LLM 智能优化） -->
-              <ResultChart
-                v-if="queryResult.data && queryResult.data.length > 0"
-                :data="queryResult.data"
-                :columns="resultColumns"
-                :column-types="queryResult.column_types || {}"
-                :query-id="currentQueryId || undefined"
-              />
-
-              <div v-if="canExport" class="export-row">
-                <el-button @click="handleExport('csv')">
-                  <el-icon><Download /></el-icon> 导出 CSV
-                </el-button>
-                <el-button @click="handleExport('xlsx')">
-                  <el-icon><Download /></el-icon> 导出 Excel
-                </el-button>
-              </div>
-            </div>
-
-            <el-alert
-              v-else
-              :title="queryResult.error || '查询失败'"
-              type="error"
-              show-icon
-              :description="`SQL: ${queryResult.sql}`"
-            />
           </div>
         </div>
       </el-tab-pane>
@@ -307,17 +235,15 @@ created_at: 下单时间（UTC）"
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
-import { Search, ArrowLeft, Download, DocumentCopy, Share, EditPen, MagicStick, Delete } from '@element-plus/icons-vue'
+import { ref, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ArrowLeft, Share, EditPen, MagicStick, Delete, ChatDotRound } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { datasetApi } from '../api/dataset'
-import { queryApi } from '../api/query'
-import { exportApi, downloadBlob } from '../api/export'
-import ResultChart from '../components/ResultChart.vue'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
+const router = useRouter()
 const store = useUserStore()
 
 const loading = ref(false)
@@ -325,45 +251,6 @@ const dataset = ref<any>(null)
 const analysis = ref<any>(null)
 const activeTab = ref('analysis')
 
-const question = ref('')
-const queryLoading = ref(false)
-const queryResult = ref<any>(null)
-const currentQueryId = ref<string | null>(null)
-
-// AI 思考动画：查询进行中循环切换文案，降低用户等待焦虑
-const thinkingTexts = [
-  '正在分析数据结构',
-  '正在生成 SQL 查询',
-  '正在校验安全性',
-  '正在执行查询',
-  '正在整理结果',
-]
-const thinkingText = ref(thinkingTexts[0])
-let thinkingTimer: ReturnType<typeof setInterval> | null = null
-let thinkingIndex = 0
-
-function startThinking() {
-  thinkingIndex = 0
-  thinkingText.value = thinkingTexts[0]
-  thinkingTimer = setInterval(() => {
-    thinkingIndex = (thinkingIndex + 1) % thinkingTexts.length
-    thinkingText.value = thinkingTexts[thinkingIndex]
-  }, 1800) // 每 1.8 秒切换一句，配合 NL2SQL 5 步流水线的体感
-}
-
-function stopThinking() {
-  if (thinkingTimer) {
-    clearInterval(thinkingTimer)
-    thinkingTimer = null
-  }
-}
-
-onUnmounted(stopThinking)
-
-const canExport = computed(() => {
-  const role = store.user?.role
-  return role === 'admin' || role === 'analyst'
-})
 
 // 业务说明编辑：admin 全部可改，analyst 只能改自己 owner 的（与 share 权限对齐）
 const canManage = computed(() => {
@@ -410,15 +297,8 @@ interface ShareRecord {
 const shareRecords = ref<ShareRecord[]>([])
 const sharesLoading = ref(false)
 
-const resultColumns = computed(() => {
-  if (!queryResult.value?.data?.length) return []
-  return Object.keys(queryResult.value.data[0])
-})
-
 async function loadDataset(id: string) {
   loading.value = true
-  queryResult.value = null
-  currentQueryId.value = null
   try {
     const [detailRes, analysisRes] = await Promise.all([
       datasetApi.getDetail(id),
@@ -431,53 +311,18 @@ async function loadDataset(id: string) {
   }
 }
 
+/** 跳转 AI 对话页（预选本数据集；带问题则预填输入框） */
+function goChat(question?: string) {
+  router.push({
+    path: '/chat',
+    query: { dataset: route.params.id, ...(question ? { q: question } : {}) },
+  })
+}
+
 watch(() => route.params.id, (id) => {
   if (id) loadDataset(id as string)
 }, { immediate: true })
 
-async function handleQuery() {
-  const id = route.params.id as string
-  if (!question.value.trim()) {
-    ElMessage.warning('请输入查询问题')
-    return
-  }
-  queryLoading.value = true
-  queryResult.value = null
-  startThinking()
-  try {
-    const res = await queryApi.query(id, question.value)
-    queryResult.value = res.data
-    currentQueryId.value = res.data.query_id || null
-    if (!res.data.success) {
-      ElMessage.error(res.data.error || '查询失败')
-    }
-  } finally {
-    queryLoading.value = false
-    stopThinking()
-  }
-}
-
-function copySql() {
-  if (!queryResult.value?.sql) return
-  navigator.clipboard.writeText(queryResult.value.sql)
-  ElMessage.success('SQL 已复制')
-}
-
-async function handleExport(format: 'csv' | 'xlsx') {
-  if (!currentQueryId.value) {
-    ElMessage.error('未找到查询记录，无法导出')
-    return
-  }
-  try {
-    const res = await exportApi.exportFile(currentQueryId.value, format)
-    const ext = format === 'csv' ? '.csv' : '.xlsx'
-    const filename = `${dataset.value?.name || 'export'}_result${ext}`
-    downloadBlob(res.data as Blob, filename)
-    ElMessage.success('导出成功')
-  } catch {
-    ElMessage.error('导出失败')
-  }
-}
 
 async function openShareDialog() {
   shareDialogVisible.value = true
@@ -875,5 +720,20 @@ function formatTime(t: string) {
 .business-desc-empty {
   color: var(--brand-text-secondary);
   font-style: italic;
+}
+.chat-entry-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 36px 24px;
+  text-align: center;
+}
+
+.chat-entry-desc {
+  margin: 0;
+  color: var(--el-text-color-secondary);
+  font-size: 13.5px;
+  max-width: 420px;
 }
 </style>

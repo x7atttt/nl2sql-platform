@@ -249,7 +249,8 @@ async function handleDelete(row: DataSource) {
 }
 
 function goQuery(row: DataSource) {
-  router.push(`/datasources/${row.id}/query`)
+  // 查询交互已统一到 AI 对话页（chat_db 场景）
+  router.push({ path: '/chat', query: { source: row.id } })
 }
 
 function formatTime(t: string | null) {

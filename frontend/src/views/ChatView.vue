@@ -224,12 +224,15 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ChatDotRound, CopyDocument, Delete, Plus } from '@element-plus/icons-vue'
 import ResultChart from '../components/ResultChart.vue'
 import { chatApi, type ChatMessageItem, type ConversationItem, type TraceSpanItem } from '../api/chat'
 import { datasetApi } from '../api/dataset'
 import { datasourceApi } from '../api/datasource'
+
+const route = useRoute()
 
 /** 帧图表类型 → ResultChart 图表类型（response_table 等不适配图表的返回 null） */
 const CHART_KIND: Record<string, 'bar' | 'line' | 'area' | 'pie' | 'scatter' | null> = {
@@ -430,7 +433,26 @@ function copySql(sql: string) {
   navigator.clipboard.writeText(sql).then(() => ElMessage.success('已复制'))
 }
 
-onMounted(loadConversations)
+/** 从数据集/数据源页跳转入口：预选资源直接建会话，q 预填问题 */
+async function enterFromQuery(datasetId?: string, sourceId?: string) {
+  try {
+    const payload = datasetId
+      ? { chat_mode: 'chat_file', dataset_id: datasetId }
+      : { chat_mode: 'chat_db', source_id: sourceId as string }
+    const res = await chatApi.createConversation(payload)
+    await loadConversations()
+    await selectConversation(res.data.id)
+  } catch { /* request 拦截器已提示错误 */ }
+}
+
+onMounted(async () => {
+  await loadConversations()
+  const { dataset, source, q } = route.query
+  if (dataset || source) {
+    await enterFromQuery(dataset as string | undefined, source as string | undefined)
+    if (q) input.value = String(q)
+  }
+})
 </script>
 
 <style scoped>
