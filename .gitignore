@@ -42,3 +42,5 @@ test/
 _ws_diag.log
 reference/
 test.http
+# ZCode
+.zcode/
