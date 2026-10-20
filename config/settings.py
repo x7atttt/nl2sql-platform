@@ -162,10 +162,11 @@ LLM_API_KEY = os.environ.get('LLM_API_KEY', '')
 LLM_API_BASE = os.environ.get('LLM_API_BASE', 'https://api.deepseek.com')
 LLM_MODEL = os.environ.get('LLM_MODEL', 'deepseek-v4-flash')
 
-# Embedding（few-shot 语义检索，走智谱 embedding-3）
-# 与 LLM 分开配置：DeepSeek 不提供 embedding 接口，embedding 留智谱
+# Embedding（few-shot 语义检索，与 LLM 分开配置：DeepSeek 不提供 embedding 接口）
+# 端点必须是 DashScope 原生 embeddings 路径（embedding 服务按原生协议直调）
 EMBEDDING_API_KEY = os.environ.get('EMBEDDING_API_KEY', '')
 EMBEDDING_API_BASE = os.environ.get('EMBEDDING_API_BASE', 'https://open.bigmodel.cn/api/paas/v4')
+EMBEDDING_MODEL = os.environ.get('EMBEDDING_MODEL', 'text-embedding-v4')
 
 # 外部数据源凭据加密（Fernet）。未配置时创建数据源接口报错引导生成，
 # 平台其余功能不受影响。生成：python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key())"
