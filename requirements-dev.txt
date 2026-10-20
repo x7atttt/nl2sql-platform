@@ -2,3 +2,5 @@
 # 安装：pip install -r requirements-dev.txt
 
 psutil>=5.9,<7.0       # 采样 worker 进程内存峰值
+
+playwright>=1.40      # 浏览器端到端验证脚本（test/verify_*.py）

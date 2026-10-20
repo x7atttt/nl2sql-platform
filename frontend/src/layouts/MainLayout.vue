@@ -14,6 +14,10 @@
           <el-icon><DataAnalysis /></el-icon>
           <template #title>仪表盘</template>
         </el-menu-item>
+        <el-menu-item index="/chat">
+          <el-icon><ChatDotRound /></el-icon>
+          <template #title>AI 对话</template>
+        </el-menu-item>
         <el-menu-item index="/datasets">
           <el-icon><FolderOpened /></el-icon>
           <template #title>数据集</template>

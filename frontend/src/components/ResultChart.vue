@@ -102,17 +102,19 @@ const props = defineProps<{
   columnTypes: Record<string, ColumnType>
   /** 查询历史 ID，用于异步调 LLM 图表推荐 */
   queryId?: string
+  /** 对话场景：LLM 已选定的图表类型（帧 chart_type），优先于规则引擎默认推荐 */
+  presetType?: Exclude<ChartType, null>
 }>()
 
 // 初次进入时按规则引擎推荐默认配置（0 等待，用户立即看到图）
 const initial = suggestChart(props.columns, props.columnTypes, props.data)
-const currentType = ref<Exclude<ChartType, null>>(initial.chartType ?? 'bar')
+const currentType = ref<Exclude<ChartType, null>>(props.presetType ?? initial.chartType ?? 'bar')
 const currentXField = ref(initial.xField)
 const currentYFields = ref<string[]>(initial.yFields)
 
 // 可视化开关：智能默认——规则引擎判断"适合可视化"(chartType≠null)时自动展开，
 // 否则默认收起（单数字/明细数据不需要图表，避免占位突兀）。用户可手动开/关
-const showChart = ref(initial.chartType !== null)
+const showChart = ref((props.presetType ?? initial.chartType) !== null)
 
 // AI 优化状态：idle（未触发）/ loading（请求中）/ done（已应用）/ failed（降级）
 const aiState = ref<'idle' | 'loading' | 'done' | 'failed'>('idle')
