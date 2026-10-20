@@ -44,3 +44,4 @@ reference/
 test.http
 # ZCode
 .zcode/
+spec/
