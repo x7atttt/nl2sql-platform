@@ -58,6 +58,16 @@ def _approx_row_count(conn, db_type: str, table: str, preparer) -> int | None:
                 text('SELECT reltuples::bigint FROM pg_class WHERE relname = :t'),
                 {'t': table},
             ).scalar()
+        if db_type == 'clickhouse':
+            return conn.execute(
+                text('SELECT total_rows FROM system.tables '
+                     'WHERE database = currentDatabase() AND name = :t'),
+                {'t': table},
+            ).scalar()
+        if db_type == 'sqlite':
+            # 本地库文件规模小，精确计数即可
+            quoted = preparer.quote(table, force=True)
+            return conn.execute(text(f'SELECT COUNT(*) FROM {quoted}')).scalar()
         # MySQL：information_schema 近似行数
         return conn.execute(
             text('SELECT TABLE_ROWS FROM information_schema.TABLES '
@@ -68,6 +78,14 @@ def _approx_row_count(conn, db_type: str, table: str, preparer) -> int | None:
         return None
 
 
+def _list_user_tables(insp, db_type: str) -> list:
+    """用户表清单（SQLite 过滤 sqlite_* 内部表）。"""
+    names = insp.get_table_names()
+    if db_type == 'sqlite':
+        return [t for t in names if not t.startswith('sqlite_')]
+    return names
+
+
 def _compute_tables_overview(engine, db_type: str) -> dict:
     """内省 + 采样，产出全部表的结构概览（无缓存）。"""
     insp = inspect(engine)
@@ -76,7 +94,7 @@ def _compute_tables_overview(engine, db_type: str) -> dict:
     fk_hints = []
 
     with engine.connect() as conn:
-        for table in insp.get_table_names():
+        for table in _list_user_tables(insp, db_type):
             cols_meta = insp.get_columns(table)
             columns = []
             for c in cols_meta:

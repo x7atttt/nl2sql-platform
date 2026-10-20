@@ -15,6 +15,7 @@ class ExternalDataSource(models.Model):
     name = models.CharField(max_length=255, verbose_name='数据源名称')
     db_type = models.CharField(max_length=20, choices=[
         ('mysql', 'MySQL'), ('postgresql', 'PostgreSQL'),
+        ('sqlite', 'SQLite'), ('clickhouse', 'ClickHouse'),
     ], verbose_name='数据库类型')
     host = models.CharField(max_length=255, verbose_name='主机')
     port = models.IntegerField(verbose_name='端口')

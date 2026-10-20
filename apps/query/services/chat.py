@@ -118,11 +118,14 @@ _EXTERNAL_SQL_RULES = Template("""- 数据存储在真实的$db_type_name数据�
 - 不要使用 LIMIT 以外的结果限制方式
 $nulls_rule""")
 
-_DB_TYPE_NAMES = {'mysql': 'MySQL', 'postgresql': 'PostgreSQL'}
+_DB_TYPE_NAMES = {'mysql': 'MySQL', 'postgresql': 'PostgreSQL',
+                  'sqlite': 'SQLite', 'clickhouse': 'ClickHouse'}
 
 _NULLS_RULES = {
     'postgresql': '- ORDER BY 排序时必须加 NULLS LAST（PostgreSQL 默认 DESC 时 NULL 排最前）',
     'mysql': '- MySQL 不支持 NULLS LAST 语法；想让空值排最后用 ORDER BY (列名 IS NULL), 列名',
+    'sqlite': '- ORDER BY 排序时必须加 NULLS LAST（SQLite 默认 ASC 时 NULL 排最前）',
+    'clickhouse': '- ClickHouse 默认 NULL 已排在最后，且支持 ORDER BY ... NULLS LAST 语法',
 }
 
 

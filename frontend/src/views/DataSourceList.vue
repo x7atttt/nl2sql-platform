@@ -14,13 +14,15 @@
         <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
         <el-table-column label="类型" width="110">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.db_type === 'mysql' ? 'warning' : 'success'">
-              {{ row.db_type === 'mysql' ? 'MySQL' : 'PostgreSQL' }}
+            <el-tag size="small" :type="DB_TAGS[row.db_type]?.type || 'info'">
+              {{ DB_TAGS[row.db_type]?.label || row.db_type }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="连接" min-width="200" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.host }}:{{ row.port }}/{{ row.database }}</template>
+          <template #default="{ row }">
+            {{ row.db_type === 'sqlite' ? row.database : `${row.host}:${row.port}/${row.database}` }}
+          </template>
         </el-table-column>
         <el-table-column label="状态" width="92">
           <template #default="{ row }">
@@ -65,23 +67,30 @@
           <el-radio-group v-model="form.db_type" @change="onTypeChange">
             <el-radio value="mysql">MySQL</el-radio>
             <el-radio value="postgresql">PostgreSQL</el-radio>
+            <el-radio value="sqlite">SQLite</el-radio>
+            <el-radio value="clickhouse">ClickHouse</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="主机" prop="host">
-          <el-input v-model="form.host" placeholder="如 127.0.0.1" />
+        <template v-if="form.db_type !== 'sqlite'">
+          <el-form-item label="主机" prop="host">
+            <el-input v-model="form.host" placeholder="如 127.0.0.1" />
+          </el-form-item>
+          <el-form-item label="端口" prop="port">
+            <el-input-number v-model="form.port" :min="1" :max="65535" controls-position="right" />
+          </el-form-item>
+        </template>
+        <el-form-item :label="form.db_type === 'sqlite' ? '库文件' : '数据库'" prop="database">
+          <el-input v-model="form.database"
+                    :placeholder="form.db_type === 'sqlite' ? '服务器上的 .db 文件绝对路径' : '库名'" />
         </el-form-item>
-        <el-form-item label="端口" prop="port">
-          <el-input-number v-model="form.port" :min="1" :max="65535" controls-position="right" />
-        </el-form-item>
-        <el-form-item label="数据库" prop="database">
-          <el-input v-model="form.database" placeholder="库名" />
-        </el-form-item>
-        <el-form-item label="用户名" prop="username">
-          <el-input v-model="form.username" autocomplete="off" />
-        </el-form-item>
-        <el-form-item label="密码" prop="password">
-          <el-input v-model="form.password" type="password" show-password autocomplete="new-password" />
-        </el-form-item>
+        <template v-if="form.db_type !== 'sqlite'">
+          <el-form-item label="用户名" prop="username">
+            <el-input v-model="form.username" autocomplete="off" />
+          </el-form-item>
+          <el-form-item label="密码" prop="password">
+            <el-input v-model="form.password" type="password" show-password autocomplete="new-password" />
+          </el-form-item>
+        </template>
         <el-form-item label="业务说明">
           <el-input v-model="form.business_description" type="textarea" :rows="2"
                     placeholder="库/表的业务背景（可选），帮助 AI 理解字段含义" maxlength="2000" />
@@ -114,7 +123,15 @@ const router = useRouter()
 const loading = ref(false)
 const sources = ref<DataSource[]>([])
 
-const DEFAULT_PORTS: Record<string, number> = { mysql: 3306, postgresql: 5432 }
+const DEFAULT_PORTS: Record<string, number> = {
+  mysql: 3306, postgresql: 5432, clickhouse: 9000,
+}
+const DB_TAGS: Record<string, { label: string; type: string }> = {
+  mysql: { label: 'MySQL', type: 'warning' },
+  postgresql: { label: 'PostgreSQL', type: 'success' },
+  sqlite: { label: 'SQLite', type: 'info' },
+  clickhouse: { label: 'ClickHouse', type: 'danger' },
+}
 
 const createVisible = ref(false)
 const formRef = ref<FormInstance>()
@@ -130,13 +147,15 @@ const testResult = ref<{ ok: boolean; server_version?: string; error?: string } 
 const requiredRule = (label: string) => [{
   required: true, message: `请填写${label}`, trigger: 'blur' },
 ]
+// SQLite（本地文件库）无主机/凭据，连接字段只校验库文件路径
+const isSqlite = () => form.value.db_type === 'sqlite'
 const formRules: FormRules = {
   name: requiredRule('数据源名称'),
   db_type: requiredRule('数据库类型'),
-  host: requiredRule('主机地址'),
-  database: requiredRule('数据库名'),
-  username: requiredRule('用户名'),
-  password: requiredRule('密码'),
+  host: [{ required: true, message: '请填写主机地址', trigger: 'blur' }],
+  database: [{ required: true, message: '请填写数据库名/库文件路径', trigger: 'blur' }],
+  username: [{ required: true, message: '请填写用户名', trigger: 'blur' }],
+  password: [{ required: true, message: '请填写密码', trigger: 'blur' }],
 }
 
 function openCreateDialog() {
@@ -150,15 +169,17 @@ function openCreateDialog() {
 }
 
 function onTypeChange() {
-  form.value.port = DEFAULT_PORTS[form.value.db_type]
+  form.value.port = DEFAULT_PORTS[form.value.db_type] || 0
 }
 
 /** 测试连接只校验连接相关字段（名称可以后填） */
 async function validateConnectionFields(): Promise<boolean> {
   if (!formRef.value) return false
   try {
-    await formRef.value.validateField(
-      ['db_type', 'host', 'port', 'database', 'username', 'password'])
+    const fields = isSqlite()
+      ? ['db_type', 'database']
+      : ['db_type', 'host', 'port', 'database', 'username', 'password']
+    await formRef.value.validateField(fields)
     return true
   } catch {
     return false

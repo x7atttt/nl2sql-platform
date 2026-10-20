@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 _NULLS_RULES = {
     'postgresql': '使用 ORDER BY 排序时必须加 NULLS LAST（PostgreSQL 默认 DESC 时 NULL 排最前）',
     'mysql': 'MySQL 不支持 NULLS LAST 语法；想让空值排最后用 ORDER BY (列名 IS NULL), 列名',
+    'sqlite': '使用 ORDER BY 排序时必须加 NULLS LAST（SQLite 默认 ASC 时 NULL 排最前）',
+    'clickhouse': 'ClickHouse 默认 NULL 已排在最后，且支持 ORDER BY ... NULLS LAST 语法',
 }
 
 SQL_GENERATE_EXTERNAL_SYSTEM = Template("""你是一个专业的SQL生成助手。根据以下信息生成SQL查询。
@@ -65,7 +67,8 @@ $schema_summary
 SQL_GENERATE_USER = Template("用户问题: $question\n\n请生成SQL查询（只输出SQL语句，不要解释）:")
 SQL_FIX_USER = Template("问题: $question\n\n失败的SQL: $failed_sql\n\n错误信息: $error_msg\n\n请生成修复后的SQL（只输出SQL语句）:")
 
-_DB_TYPE_NAMES = {'mysql': 'MySQL', 'postgresql': 'PostgreSQL'}
+_DB_TYPE_NAMES = {'mysql': 'MySQL', 'postgresql': 'PostgreSQL',
+                  'sqlite': 'SQLite', 'clickhouse': 'ClickHouse'}
 
 
 def _escape_braces(s: str) -> str:

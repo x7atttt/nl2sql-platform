@@ -18,38 +18,56 @@ class ExternalDataSourceSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+DB_TYPES = ['mysql', 'postgresql', 'sqlite', 'clickhouse']
+
+
+def _normalize_conn_attrs(attrs: dict) -> dict:
+    """端口缺省按类型补默认；SQLite（本地文件库）无主机/凭据概念，统一补空。"""
+    db_type = attrs.get('db_type')
+    if not attrs.get('port'):
+        attrs['port'] = DEFAULT_PORTS.get(db_type) or 0
+    if db_type == 'sqlite':
+        attrs.setdefault('host', '')
+        attrs.setdefault('username', '')
+        attrs.setdefault('password', '')
+    elif not attrs.get('host') or not attrs.get('username'):
+        raise serializers.ValidationError('该数据库类型必须填写主机和用户名')
+    return attrs
+
+
 class ExternalDataSourceCreateSerializer(serializers.Serializer):
     """创建入参：连接信息 + 明文密码（只在内存停留，落库前加密）。"""
     name = serializers.CharField(max_length=255)
-    db_type = serializers.ChoiceField(choices=['mysql', 'postgresql'])
-    host = serializers.CharField(max_length=255)
-    port = serializers.IntegerField(min_value=1, max_value=65535, required=False)
+    db_type = serializers.ChoiceField(choices=DB_TYPES)
+    host = serializers.CharField(max_length=255, required=False, allow_blank=True,
+                                 default='')
+    port = serializers.IntegerField(min_value=0, max_value=65535, required=False)
     database = serializers.CharField(max_length=255)
-    username = serializers.CharField(max_length=255)
-    password = serializers.CharField(max_length=255, write_only=True)
+    username = serializers.CharField(max_length=255, required=False, allow_blank=True,
+                                     default='')
+    password = serializers.CharField(max_length=255, required=False, allow_blank=True,
+                                     default='', write_only=True)
     business_description = serializers.CharField(required=False, allow_blank=True,
                                                 default='', max_length=2000)
 
     def validate(self, attrs):
-        # 端口缺省按类型补默认
-        if not attrs.get('port'):
-            attrs['port'] = DEFAULT_PORTS[attrs['db_type']]
-        return attrs
+        return _normalize_conn_attrs(attrs)
 
 
 class ConnectionTestSerializer(serializers.Serializer):
     """保存前连通性测试入参（不落库）。"""
-    db_type = serializers.ChoiceField(choices=['mysql', 'postgresql'])
-    host = serializers.CharField(max_length=255)
-    port = serializers.IntegerField(min_value=1, max_value=65535, required=False)
+    db_type = serializers.ChoiceField(choices=DB_TYPES)
+    host = serializers.CharField(max_length=255, required=False, allow_blank=True,
+                                 default='')
+    port = serializers.IntegerField(min_value=0, max_value=65535, required=False)
     database = serializers.CharField(max_length=255)
-    username = serializers.CharField(max_length=255)
-    password = serializers.CharField(max_length=255)
+    username = serializers.CharField(max_length=255, required=False, allow_blank=True,
+                                     default='')
+    password = serializers.CharField(max_length=255, required=False, allow_blank=True,
+                                     default='')
 
     def validate(self, attrs):
-        if not attrs.get('port'):
-            attrs['port'] = DEFAULT_PORTS[attrs['db_type']]
-        return attrs
+        return _normalize_conn_attrs(attrs)
 
 
 class ExternalQuerySerializer(serializers.Serializer):
