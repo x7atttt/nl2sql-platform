@@ -13,15 +13,14 @@
         >
           编辑业务说明
         </el-button>
-        <el-button
-          v-if="canShare"
-          type="primary"
-          :icon="Share"
-          :disabled="!canShareThisDataset"
-          @click="openShareDialog"
-        >
-          分享数据集
-        </el-button>
+        <div v-if="canPublish" class="publish-switch">
+          <span class="publish-label">{{ dataset.visibility === 'published' ? '已发布（全员可查询/对话）' : '私有（仅自己与管理员）' }}</span>
+          <el-switch
+            :model-value="dataset.visibility === 'published'"
+            :loading="publishing"
+            @change="togglePublish"
+          />
+        </div>
         <el-tag v-if="dataset" :type="statusType(dataset.status)" size="large">{{ statusLabel(dataset.status) }}</el-tag>
       </div>
     </div>
@@ -122,82 +121,6 @@
     </el-tabs>
     <div v-else v-loading="true" class="detail-tabs-loading"></div>
 
-    <!-- 分享数据集弹窗（含当前分享记录 + 撤销）-->
-    <el-dialog v-model="shareDialogVisible" title="分享数据集" width="560px">
-      <el-form label-width="80px">
-        <el-form-item label="数据集">
-          <span>{{ dataset?.name }}</span>
-        </el-form-item>
-        <el-form-item label="分享给">
-          <el-select
-            v-model="shareTargetId"
-            placeholder="选择用户"
-            filterable
-            :loading="shareUsersLoading"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="u in shareableUsers"
-              :key="u.id"
-              :label="`${u.username}（${roleLabel(u.role)}）`"
-              :value="u.id"
-            />
-          </el-select>
-        </el-form-item>
-      </el-form>
-
-      <!-- 当前分享记录（admin 任意 / analyst 仅自己 owner 的） -->
-      <div class="share-records-section">
-        <div class="share-records-header">
-          <span>当前分享记录（{{ shareRecords.length }}）</span>
-        </div>
-        <el-table
-          :data="shareRecords"
-          size="small"
-          v-loading="sharesLoading"
-          empty-text="暂无分享记录"
-        >
-          <el-table-column label="被分享人" min-width="130">
-            <template #default="{ row }">
-              {{ row.shared_to.username }}（{{ roleLabel(row.shared_to.role) }}）
-            </template>
-          </el-table-column>
-          <el-table-column label="分享人" width="100">
-            <template #default="{ row }">{{ row.shared_by.username }}</template>
-          </el-table-column>
-          <el-table-column label="分享时间" width="155">
-            <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
-          </el-table-column>
-          <el-table-column label="操作" width="64" fixed="right">
-            <template #default="{ row }">
-              <el-popconfirm
-                title="确定撤销该用户的查询权限？"
-                confirm-button-text="撤销"
-                cancel-button-text="取消"
-                @confirm="handleUnshare(row.id)"
-              >
-                <template #reference>
-                  <el-button class="action-icon-btn" link type="danger" :icon="Delete" />
-                </template>
-              </el-popconfirm>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
-
-      <template #footer>
-        <el-button @click="shareDialogVisible = false">取消</el-button>
-        <el-button
-          type="primary"
-          :loading="sharing"
-          :disabled="!shareTargetId"
-          @click="handleShare"
-        >
-          确认分享
-        </el-button>
-      </template>
-    </el-dialog>
-
     <!-- 编辑业务说明弹窗 -->
     <el-dialog v-model="editDialogVisible" title="编辑业务说明" width="600px">
       <el-alert
@@ -237,7 +160,7 @@ created_at: 下单时间（UTC）"
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Share, EditPen, MagicStick, Delete, ChatDotRound } from '@element-plus/icons-vue'
+import { ArrowLeft, EditPen, MagicStick, ChatDotRound } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { datasetApi } from '../api/dataset'
 import { ElMessage } from 'element-plus'
@@ -266,36 +189,30 @@ const editDialogVisible = ref(false)
 const editBusinessDesc = ref('')
 const savingDesc = ref(false)
 
-// 分享功能：admin/analyst 可见按钮；analyst 只能分享自己 owner 的
-const canShare = computed(() => {
-  const role = store.user?.role
-  return role === 'admin' || role === 'analyst'
-})
-const canShareThisDataset = computed(() => {
+// 发布开关：admin/analyst 可见；analyst 仅自己 owner 的（后端同口径）
+const canPublish = computed(() => {
   if (!dataset.value) return false
   const role = store.user?.role
-  if (role === 'admin') return true                        // admin 能分享任意
-  if (role === 'analyst') return dataset.value.owner === store.user?.id  // analyst 只能分享自己的
+  if (role === 'admin') return true
+  if (role === 'analyst') return dataset.value.owner === store.user?.id
   return false
 })
+const publishing = ref(false)
 
-// 分享弹窗状态
-const shareDialogVisible = ref(false)
-const shareableUsers = ref<{ id: number; username: string; role: string }[]>([])
-const shareUsersLoading = ref(false)
-const shareTargetId = ref<number | null>(null)
-const sharing = ref(false)
-
-// 分享记录（对话框内展示 + 撤销操作）
-interface ShareRecord {
-  id: string
-  shared_to: { id: number; username: string; role: string }
-  shared_by: { id: number; username: string }
-  permission: string
-  created_at: string
+async function togglePublish() {
+  if (!dataset.value) return
+  publishing.value = true
+  try {
+    const next = dataset.value.visibility === 'published' ? 'private' : 'published'
+    const res = await datasetApi.patchDetail(dataset.value.id, { visibility: next })
+    dataset.value = res.data
+    ElMessage.success(next === 'published' ? '已发布，全员可查询与对话' : '已转为私有')
+  } catch {
+    /* request 拦截器已提示 */
+  } finally {
+    publishing.value = false
+  }
 }
-const shareRecords = ref<ShareRecord[]>([])
-const sharesLoading = ref(false)
 
 async function loadDataset(id: string) {
   loading.value = true
@@ -323,70 +240,6 @@ watch(() => route.params.id, (id) => {
   if (id) loadDataset(id as string)
 }, { immediate: true })
 
-
-async function openShareDialog() {
-  shareDialogVisible.value = true
-  shareTargetId.value = null
-  // 同时拉取可分享用户列表 + 当前分享记录
-  shareUsersLoading.value = true
-  sharesLoading.value = true
-  try {
-    const [usersRes, sharesRes] = await Promise.all([
-      datasetApi.getShareableUsers(),
-      dataset.value ? datasetApi.getShares(dataset.value.id) : Promise.resolve({ data: [] }),
-    ])
-    shareableUsers.value = usersRes.data
-    shareRecords.value = sharesRes.data
-  } catch {
-    ElMessage.error('获取分享信息失败')
-  } finally {
-    shareUsersLoading.value = false
-    sharesLoading.value = false
-  }
-}
-
-async function refreshShares() {
-  if (!dataset.value) return
-  try {
-    const res = await datasetApi.getShares(dataset.value.id)
-    shareRecords.value = res.data
-  } catch {
-    /* 静默失败，不打断主流程 */
-  }
-}
-
-async function handleShare() {
-  if (!shareTargetId.value || !dataset.value) return
-  sharing.value = true
-  try {
-    const res = await datasetApi.share(dataset.value.id, shareTargetId.value)
-    ElMessage.success(res.data.message || '分享成功')
-    shareTargetId.value = null  // 清空选择，便于继续分享给下一个
-    refreshShares()  // 刷新分享记录，让新分享立即出现在表格里
-  } catch (e: any) {
-    const msg = e?.response?.data?.error || '分享失败'
-    ElMessage.error(msg)
-  } finally {
-    sharing.value = false
-  }
-}
-
-async function handleUnshare(shareId: string) {
-  if (!dataset.value) return
-  try {
-    await datasetApi.unshare(dataset.value.id, shareId)
-    ElMessage.success('已撤销分享')
-    refreshShares()
-  } catch (e: any) {
-    const msg = e?.response?.data?.error || '撤销失败'
-    ElMessage.error(msg)
-  }
-}
-
-function roleLabel(role: string) {
-  const map: Record<string, string> = { admin: '管理员', analyst: '分析师', viewer: '只读用户' }
-  return map[role] || role
-}
 
 function openEditDialog() {
   // 打开编辑弹窗前回填当前业务说明（避免上次输入残留）
@@ -428,10 +281,6 @@ function formatSize(bytes: number) {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
-function formatTime(t: string) {
-  if (!t) return '-'
-  return t.replace('T', ' ').slice(0, 19)
-}
 </script>
 
 <style scoped>
@@ -454,18 +303,7 @@ function formatTime(t: string) {
 }
 
 /* 分享记录区域（对话框内） */
-.share-records-section {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--brand-border);
-}
 
-.share-records-header {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--brand-text-secondary);
-  margin-bottom: 8px;
-}
 
 .header-left {
   display: flex;
@@ -735,5 +573,15 @@ function formatTime(t: string) {
   color: var(--el-text-color-secondary);
   font-size: 13.5px;
   max-width: 420px;
+}
+.publish-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.publish-label {
+  font-size: 12.5px;
+  color: var(--el-text-color-secondary);
 }
 </style>

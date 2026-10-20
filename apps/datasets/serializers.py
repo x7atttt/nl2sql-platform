@@ -9,12 +9,12 @@ class DatasetSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'description', 'business_description', 'suggested_questions',
             'file', 'file_name', 'file_size',
-            'row_count', 'column_count', 'status',
+            'row_count', 'column_count', 'status', 'visibility',
             'owner', 'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'file_name', 'file_size',
-            'row_count', 'column_count', 'status', 'owner',
+            'row_count', 'column_count', 'status', 'visibility', 'owner',
             'created_at', 'updated_at',
         ]
         #这段是在给 Django REST Framework 的序列化器补充字段级别的输入规则，

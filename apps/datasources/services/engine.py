@@ -84,13 +84,30 @@ def build_url(db_type: str, host: str, port: int, database: str,
 
 def create_engine_for(db_type: str, host: str, port: int, database: str,
                       username: str, password: str) -> Engine:
-    """按连接参数创建 engine（创建前测试连通 / 查询时按需创建共用此入口）。"""
+    """按连接参数创建 engine（创建前测试连通 / 查询时按需创建共用此入口）。
+
+    会话只读加固（沙箱第二层，见 sql_sandbox 模块注释）：即使 SQL 校验被
+    绕过，连接本身也拒绝写入/限制执行时长。
+    """
     url = build_url(db_type, host, port, database, username, password)
     connect_args = {'connect_timeout': 5}
     if db_type == 'mysql':
         connect_args['charset'] = 'utf8mb4'
+        # 会话级只读事务 + 30s 读超时（写语句在事务层被库拒绝）
+        connect_args['init_command'] = 'SET SESSION TRANSACTION READ ONLY'
+        connect_args['read_timeout'] = 30
+    elif db_type == 'postgresql':
+        connect_args['options'] = (
+            '-c default_transaction_read_only=on -c statement_timeout=15000')
+    elif db_type == 'clickhouse':
+        pass  # 只读加固在执行层做：方言不透传 connect 级 settings，
+              # 且 text() 编译路径会绕过会话 SET——见 nl2sql_external.execute_external_sql
     elif db_type == 'sqlite':
-        connect_args = {'timeout': 5}  # sqlite3 锁等待秒数
+        # 只读 URI 连接（mode=ro 不创建文件，写入直接报错）
+        from pathlib import PurePath
+        posix = PurePath(database).as_posix()
+        url = f'sqlite:///file:{posix}?mode=ro&uri=true'
+        connect_args = {'uri': True}
     return create_engine(url, poolclass=NullPool, connect_args=connect_args)
 
 
@@ -113,6 +130,8 @@ def _classify_connection_error(e: Exception) -> str:
         return f'网络连接失败（主机/端口不可达或超时）：{msg}'
     if 'database' in msg.lower() and ('exist' in msg.lower() or 'unknown' in msg.lower()):
         return f'数据库不存在：{msg}'
+    if 'unable to open' in msg.lower():
+        return f'无法打开数据库文件（路径不存在或无权限）：{msg}'
     return msg
 
 

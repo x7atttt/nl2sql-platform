@@ -80,7 +80,12 @@ def execute_external_sql(engine, sql: str) -> tuple:
 
     复用查询服务的净化/类型推断/重复列名检测，保证与文件路径行为一致。
     """
+    # ClickHouse 只读加固在执行层注入 per-query settings（方言不透传 connect
+    # 级 settings，且 text() 编译路径会绕过会话 SET——实测结论）
     with engine.connect() as conn:
+        if engine.dialect.name == 'clickhouse':
+            conn = conn.execution_options(
+                settings={'readonly': 1, 'max_execution_time': 30})
         result = conn.execute(text(sql))
         columns = list(result.keys())
         rows = result.fetchall()
@@ -156,6 +161,18 @@ class ExternalNL2SQLService:
             if not validate_select_sql(sql):
                 return {'success': False, 'sql': sql,
                         'error': '生成的SQL包含不允许的操作，仅支持SELECT查询',
+                        'retry_count': 0,
+                        'execution_time_ms': int((time.time() - start_time) * 1000)}
+            # AST 沙箱：单语句/SELECT/表白名单（防正则被注释/CTE 绕过）
+            from apps.query.services.nl2sql import SQLGLOT_DIALECTS
+            from apps.query.services.sql_sandbox import sandbox_check_sql
+            from apps.datasources.services.introspect import get_tables_overview
+            allowed = {t['name'] for t in get_tables_overview(self.source)['tables']}
+            sandbox_reason = sandbox_check_sql(
+                sql, allowed, SQLGLOT_DIALECTS[self.source.db_type])
+            if sandbox_reason:
+                return {'success': False, 'sql': sql,
+                        'error': f'SQL 安全沙箱拒绝：{sandbox_reason}',
                         'retry_count': 0,
                         'execution_time_ms': int((time.time() - start_time) * 1000)}
 

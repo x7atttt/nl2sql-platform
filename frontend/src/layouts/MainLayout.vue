@@ -30,10 +30,6 @@
           <el-icon><Clock /></el-icon>
           <template #title>查询历史</template>
         </el-menu-item>
-        <el-menu-item index="/shares">
-          <el-icon><Share /></el-icon>
-          <template #title>分享记录</template>
-        </el-menu-item>
         <el-menu-item v-if="isAdmin" index="/users/manage">
           <el-icon><User /></el-icon>
           <template #title>用户管理</template>

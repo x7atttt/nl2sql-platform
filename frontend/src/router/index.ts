@@ -56,11 +56,6 @@ const router = createRouter({
           component: () => import('../views/DataSourceList.vue'),
         },
         {
-          path: 'shares',
-          name: 'share-records',
-          component: () => import('../views/ShareRecords.vue'),
-        },
-        {
           path: 'users/manage',
           name: 'user-manage',
           component: () => import('../views/UserManage.vue'),

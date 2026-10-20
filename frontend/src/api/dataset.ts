@@ -24,34 +24,23 @@ export const datasetApi = {
     return request.patch(`/api/datasets/${id}/`, payload)
   },
 
+  /** 部分更新（业务说明 / visibility 发布开关） */
+  patchDetail(id: string, payload: Record<string, unknown>) {
+    return request.patch(`/api/datasets/${id}/`, payload)
+  },
+
   getAnalysis(id: string) {
     return request.get(`/api/datasets/${id}/analysis/`)
   },
 
   /** 分享数据集给指定用户（analyst/admin 可调） */
-  share(id: string, userId: number) {
-    return request.post(`/api/datasets/${id}/share/`, { user_id: userId })
-  },
 
-  /** 获取可分享的用户列表（analyst/admin 可调，仅返回 id + username） */
-  getShareableUsers() {
-    return request.get(`/api/datasets/shareable_users/`)
-  },
 
   /** 查看某数据集的分享记录（admin 任意 / analyst 仅自己的） */
-  getShares(id: string) {
-    return request.get(`/api/datasets/${id}/shares/`)
-  },
 
   /** 撤销某数据集的单条分享 */
-  unshare(datasetId: string, shareId: string) {
-    return request.delete(`/api/datasets/${datasetId}/shares/${shareId}/`)
-  },
 
   /** 跨数据集的全局分享记录列表（侧边栏分享记录页用，按角色范围隔离） */
-  getSharesList() {
-    return request.get('/api/datasets/shares_list/')
-  },
 }
 
 /** WebSocket 推送的消息格式（与后端 tasks._send_progress 对应） */

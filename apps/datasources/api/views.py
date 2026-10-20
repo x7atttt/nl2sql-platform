@@ -26,20 +26,29 @@ from apps.datasources.services.nl2sql_external import ExternalNL2SQLService
 
 
 def _get_own_source(user, source_id):
-    """取用户有权访问的数据源（owner 或 admin），否则 None（视图返回 404 防枚举）。"""
+    """编辑/删除/重测用：owner 或 admin（共享读不共享写），否则 None。"""
     qs = ExternalDataSource.objects.all() if user.is_admin else \
         ExternalDataSource.objects.filter(owner=user)
     return qs.filter(id=source_id).first()
 
 
+def _get_accessible_source(user, source_id):
+    """读取/查询用：两态可见性（owner/admin/published），否则 None。"""
+    from apps.datasources.services.access import get_accessible_source
+    return get_accessible_source(user, source_id)
+
+
 class DataSourceListCreateView(APIView):
-    """GET 列表（owner 自己 / admin 全部）；POST 创建（先测试连通再落库）。"""
-    permission_classes = [IsAnalyst]
+    """GET 列表（两态可见性：owner 自己的+published / admin 全部）；POST 创建。"""
+    def get_permissions(self):
+        # 查看列表 viewer 也可（对话选源用）；建连接需 analyst
+        if self.request.method == 'POST':
+            return [IsAnalyst()]
+        return [IsViewer()]
 
     def get(self, request):
-        qs = ExternalDataSource.objects.all() if request.user.is_admin else \
-            ExternalDataSource.objects.filter(owner=request.user)
-        qs = qs.select_related('owner').order_by('-created_at')
+        from apps.datasources.services.access import visible_sources_qs
+        qs = visible_sources_qs(request.user).select_related('owner').order_by('-created_at')
         return Response(ExternalDataSourceSerializer(qs, many=True).data)
 
     def post(self, request):
@@ -69,11 +78,11 @@ class DataSourceListCreateView(APIView):
 
 
 class DataSourceDetailView(APIView):
-    """GET 详情 / PATCH 改名和业务说明 / DELETE（owner 或 admin）。"""
+    """GET 详情（两态可见性）/ PATCH 改名·业务说明·发布 / DELETE（owner 或 admin）。"""
     permission_classes = [IsAnalyst]
 
     def get(self, request, source_id):
-        source = _get_own_source(request.user, source_id)
+        source = _get_accessible_source(request.user, source_id)
         if source is None:
             return Response({'error': '数据源不存在或无权访问'},
                             status=status.HTTP_404_NOT_FOUND)
@@ -156,7 +165,7 @@ class DataSourceTablesView(APIView):
     permission_classes = [IsViewer]
 
     def get(self, request, source_id):
-        source = _get_own_source(request.user, source_id)
+        source = _get_accessible_source(request.user, source_id)
         if source is None:
             return Response({'error': '数据源不存在或无权访问'},
                             status=status.HTTP_404_NOT_FOUND)
@@ -180,7 +189,7 @@ class DataSourceQueryView(APIView):
     permission_classes = [IsViewer]
 
     def post(self, request, source_id):
-        source = _get_own_source(request.user, source_id)
+        source = _get_accessible_source(request.user, source_id)
         if source is None:
             return Response({'error': '数据源不存在或无权访问'},
                             status=status.HTTP_404_NOT_FOUND)

@@ -12,7 +12,7 @@ class ExternalDataSourceSerializer(serializers.ModelSerializer):
         model = ExternalDataSource
         fields = (
             'id', 'name', 'db_type', 'host', 'port', 'database', 'username',
-            'business_description', 'status', 'last_tested_at',
+            'business_description', 'visibility', 'status', 'last_tested_at',
             'owner', 'owner_name', 'created_at',
         )
         read_only_fields = fields
@@ -85,3 +85,5 @@ class ExternalDataSourceUpdateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255, required=False)
     business_description = serializers.CharField(required=False, allow_blank=True,
                                                  default='', max_length=2000)
+    visibility = serializers.ChoiceField(choices=['private', 'published'],
+                                         required=False)

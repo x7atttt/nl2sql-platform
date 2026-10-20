@@ -31,18 +31,9 @@ class DatasetViewSet(viewsets.ModelViewSet):
         return [IsViewer()]
 
     def get_queryset(self):
-        from django.db.models import Q
-        user = self.request.user
-        if user.is_admin:
-            # admin 看全部（管理需要）
-            return Dataset.objects.all().order_by('-created_at')
-        # analyst/viewer 统一口径（对标 Tableau：所有权与角色解耦）：
-        # owner 永远能看到自己的数据集 + 被分享给自己的。
-        # 角色区别在"能做什么操作"（create/destroy 走 IsAnalyst），
-        # 不在"能看什么数据"——降级（analyst→viewer）不丢数据访问权。
-        return Dataset.objects.filter(
-            Q(owner=user) | Q(shares__shared_to=user)
-        ).distinct().order_by('-created_at')
+        # 两态可见性（见 visibility.py）：admin 全部 / 其他人 owner 自己的+published
+        from apps.datasets.services.visibility import visible_datasets_qs
+        return visible_datasets_qs(self.request.user).order_by('-created_at')
 
     def create(self, request, *args, **kwargs):
         file = request.FILES.get('file')
@@ -126,9 +117,11 @@ class DatasetViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         dataset = self.get_object()
-        # 失效 schema 缓存（数据集要删了，缓存的 schema 摘要没意义了）
+        # 失效 schema 缓存 + 删物化文件（与 Dataset 生命周期绑定）
         from apps.datasets.services.analyzer import invalidate_schema_cache
+        from apps.datasets.services.materialize import delete_duckdb
         invalidate_schema_cache(dataset.id)
+        delete_duckdb(dataset)
         dataset.file.delete(save=False)
         dataset.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -141,12 +134,17 @@ class DatasetViewSet(viewsets.ModelViewSet):
         仅自己 owner 的）。
         """
         dataset = self.get_object()
-        # 白名单：只允许改业务说明（其他字段即使传了也忽略）
-        allowed_fields = {'business_description'}
+        # 白名单：业务说明 + 可见性发布开关（owner/admin 可达，见 get_queryset）
+        allowed_fields = {'business_description', 'visibility'}
         update_fields = {k: v for k, v in request.data.items() if k in allowed_fields}
+        if 'visibility' in update_fields and                 update_fields['visibility'] not in ('private', 'published'):
+            return Response(
+                {'error': 'visibility 只能是 private 或 published'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if not update_fields:
             return Response(
-                {'error': '没有可更新的字段（仅支持 business_description）'},
+                {'error': '没有可更新的字段（支持 business_description / visibility）'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         for field, value in update_fields.items():

@@ -44,6 +44,13 @@ class Dataset(models.Model):
         related_name='datasets',
         verbose_name='所属用户',
     )
+    # 两态权限模型：private=仅 owner/admin；published=全员可查询/可开对话
+    # （编辑/删除始终限 owner 与 admin——共享读不共享写）
+    visibility = models.CharField(
+        max_length=20,
+        choices=[('private', '私有'), ('published', '已发布')],
+        default='private', verbose_name='可见性',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

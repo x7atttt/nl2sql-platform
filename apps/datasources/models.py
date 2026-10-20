@@ -34,6 +34,12 @@ class ExternalDataSource(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
         related_name='datasources', verbose_name='所属用户',
     )
+    # 两态权限模型：private=仅 owner/admin；published=全员可查询/可开对话
+    visibility = models.CharField(
+        max_length=20,
+        choices=[('private', '私有'), ('published', '已发布')],
+        default='private', verbose_name='可见性',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

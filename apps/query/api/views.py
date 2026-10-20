@@ -293,9 +293,10 @@ class QueryRerunView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
         source = history.source
-        if not (request.user.is_admin or source.owner_id == request.user.id):
+        from apps.datasources.services.access import can_access_source
+        if not can_access_source(request.user, source):
             return Response(
-                {'error': '你已无权访问该数据源'},
+                {'error': '你已无权访问该数据源（可能已取消发布）'},
                 status=status.HTTP_403_FORBIDDEN,
             )
         from apps.datasources.services.engine import create_engine_for_source
@@ -443,9 +444,10 @@ class ChartSuggestView(APIView):
                 {'success': False, 'reason': '外部数据源已被删除，无法推荐图表'},
             )
         source = history.source
-        if not (request.user.is_admin or source.owner_id == request.user.id):
+        from apps.datasources.services.access import can_access_source
+        if not can_access_source(request.user, source):
             return Response(
-                {'success': False, 'reason': '你已无权访问该数据源'},
+                {'success': False, 'reason': '你已无权访问该数据源（可能已取消发布）'},
             )
         if not history.result_columns:
             return Response({'success': False, 'reason': '查询无结果列，无法可视化'})

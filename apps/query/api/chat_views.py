@@ -105,6 +105,10 @@ class ChatConversationView(APIView):
             if dataset is None:
                 return Response({'error': '数据集不存在'},
                                 status=status.HTTP_404_NOT_FOUND)
+            from apps.datasets.services.visibility import can_access_dataset
+            if not can_access_dataset(request.user, dataset):
+                return Response({'error': '该数据集未发布，无权在其上对话'},
+                                status=status.HTTP_403_FORBIDDEN)
             if dataset.status != 'completed':
                 return Response({'error': '数据集尚未处理完成'},
                                 status=status.HTTP_400_BAD_REQUEST)
@@ -116,6 +120,10 @@ class ChatConversationView(APIView):
             if source is None:
                 return Response({'error': '数据源不存在'},
                                 status=status.HTTP_404_NOT_FOUND)
+            from apps.datasources.services.access import can_access_source
+            if not can_access_source(request.user, source):
+                return Response({'error': '该数据源未发布，无权在其上对话'},
+                                status=status.HTTP_403_FORBIDDEN)
             conv = Conversation.objects.create(
                 user=request.user, chat_mode=chat_mode, source=source, skill=skill)
 
@@ -182,6 +190,14 @@ class ChatMessageStreamView(APIView):
         if not question:
             return Response({'error': '问题不能为空'},
                             status=status.HTTP_400_BAD_REQUEST)
+        # 资源可见性复检：取消发布后，绑定它的旧会话不能再继续拉数据
+        from apps.datasets.services.visibility import can_access_dataset
+        from apps.datasources.services.access import can_access_source
+        resource_ok = (can_access_dataset(request.user, conv.dataset)
+                       if conv.dataset else can_access_source(request.user, conv.source))
+        if not resource_ok:
+            return Response({'error': '绑定资源已删除或取消发布，无法继续对话'},
+                            status=status.HTTP_403_FORBIDDEN)
 
         service = ChatService(conv)
 
