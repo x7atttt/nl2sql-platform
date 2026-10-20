@@ -28,6 +28,10 @@ from apps.query.services.nl2sql import (
     _sanitize_for_json,
 )
 from apps.query.services.trace import new_trace_id, span
+from apps.query.services.nl2sql import SQLGLOT_DIALECTS
+from apps.query.services.sql_sandbox import (
+    sandbox_check_sql, mask_sensitive_columns, mask_columns_for,
+)
 
 
 def _escape_braces(s: str) -> str:
@@ -324,13 +328,34 @@ class ChatService:
 
     # ===== 校验与执行 =====
 
-    def _validate(self, sql: str) -> bool:
+    def _allowed_tables(self) -> set:
+        """AST 沙箱的表白名单：chat_file 只有一张物化表；chat_db 为该源全部表。"""
+        if self.dataset:
+            return {'data'} if self._use_duckdb else {'dataset_rows'}
+        from apps.datasources.services.introspect import get_tables_overview
+        return {t['name'] for t in get_tables_overview(self.source)['tables']}
+
+    def _sandbox_dialect(self) -> str:
+        if self.dataset:
+            return 'duckdb' if self._use_duckdb else 'postgres'
+        return SQLGLOT_DIALECTS[self.source.db_type]
+
+    def _validate(self, sql: str) -> tuple[bool, str]:
+        """双层校验：正则四层（快速路径）+ AST 沙箱（防注释/CTE/嵌套绕过）。
+        返回 (是否通过, 失败原因)；失败原因直接展示给用户/喂重试。
+        """
         if self.dataset and not self._use_duckdb:
-            # JSONB 旧路径：dataset_id 白名单防 LLM 幻觉引用未授权数据集。
-            # DuckDB 路径：只读连接只挂载本数据集文件，跨数据集从连接层不可达
-            # （与外部源同款隔离论证），无需白名单。
-            return validate_select_sql(sql, {str(self.dataset.id).lower()})
-        return validate_select_sql(sql)
+            if not validate_select_sql(sql, {str(self.dataset.id).lower()}):
+                return False, '生成的SQL包含不允许的操作，仅支持SELECT查询'
+        elif not validate_select_sql(sql):
+            return False, '生成的SQL包含不允许的操作，仅支持SELECT查询'
+        with span(self._trace_id, 'sql_validate', 'AST沙箱校验') as s:
+            reason = sandbox_check_sql(sql, self._allowed_tables(), self._sandbox_dialect())
+            s.attrs['passed'] = reason is None
+            s.attrs['tables'] = self._allowed_tables() and None  # 白名单不进摘要
+        if reason:
+            return False, f'SQL 安全沙箱拒绝：{reason}'
+        return True, ''
 
     def _execute(self, sql: str) -> tuple:
         if self.dataset and self._use_duckdb:
@@ -451,15 +476,12 @@ class ChatService:
                    'execution_time_ms': elapsed, 'trace_id': self._trace_id}
             return
 
-        # 3. 只读校验（失败不重试——与现有查询路径行为一致）
-        with span(self._trace_id, 'sql_validate', '只读校验') as s:
-            valid = self._validate(parsed['sql'])
-            s.attrs['passed'] = valid
+        # 3. 双层校验（正则 + AST 沙箱；失败不重试——与既有查询路径行为一致）
+        valid, invalid_reason = self._validate(parsed['sql'])
         if not valid:
             elapsed = int((time.time() - start_time) * 1000)
-            yield from self._fail(
-                round_index, question, parsed, elapsed,
-                '生成的SQL包含不允许的操作，仅支持SELECT查询')
+            yield from self._fail(round_index, question, parsed, elapsed,
+                                  invalid_reason)
             return
         parsed['sql'] = add_limit_clause(parsed['sql'], 1000)
 
@@ -491,10 +513,13 @@ class ChatService:
                     parsed = fixed
                     sql = parsed['sql'] = add_limit_clause(fixed['sql'], 1000)
 
-        # 5. 成功收尾
+        # 5. 成功收尾（敏感列脱敏——沙箱第三层，admin 不脱敏）
         elapsed = int((time.time() - start_time) * 1000)
         columns = list(column_types.keys())
-        view_rows = _sanitize_for_json(rows[:VIEW_ROWS_CAP])
+        masked_cols = mask_columns_for(columns, self.conversation.user)
+        rows = mask_sensitive_columns(_sanitize_for_json(rows),
+                                      self.conversation.user)
+        view_rows = rows[:VIEW_ROWS_CAP]
         assistant = self._save_assistant(
             round_index, parsed, elapsed, success=True,
             columns=columns, column_types=column_types,

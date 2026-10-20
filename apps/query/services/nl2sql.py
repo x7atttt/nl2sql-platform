@@ -13,6 +13,12 @@ from django.db import connection
 
 from apps.query.models import QueryHistory
 
+# db_type → sqlglot 方言（沙箱 AST 校验用，chat 与外部查询共用）
+SQLGLOT_DIALECTS = {
+    'mysql': 'mysql', 'postgresql': 'postgres',
+    'sqlite': 'sqlite', 'clickhouse': 'clickhouse',
+}
+
 logger = logging.getLogger(__name__)
 
 
@@ -472,14 +478,24 @@ class NL2SQLService:
         return strip_sql_comments(sql)
 
     def _validate_sql(self, sql: str) -> bool:
-        """只读 SQL 校验（见模块级 validate_select_sql）。
+        """双层校验：正则四层 + AST 沙箱（单语句/SELECT/表白名单）。
 
         DuckDB 路径连接层即隔离（只挂载参与数据集文件），不做 uuid 白名单；
         JSONB 旧路径保留白名单防 LLM 幻觉引用未授权数据集。
         """
+        from apps.query.services.sql_sandbox import sandbox_check_sql
         if self._use_duckdb:
-            return validate_select_sql(sql)
-        return validate_select_sql(sql, self._allowed_dataset_ids)
+            if not validate_select_sql(sql):
+                return False
+            if self.is_multi:
+                allowed = ({f't{i}.data' for i in range(1, len(self.datasets) + 1)}
+                           | {'data'})
+            else:
+                allowed = {'data'}
+            return sandbox_check_sql(sql, allowed, 'duckdb') is None
+        if not validate_select_sql(sql, self._allowed_dataset_ids):
+            return False
+        return sandbox_check_sql(sql, {'dataset_rows'}, 'postgres') is None
 
     def _add_limit(self, sql: str) -> str:
         return add_limit_clause(sql, 1000)

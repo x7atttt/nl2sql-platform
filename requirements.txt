@@ -27,3 +27,4 @@ pyarrow>=16.0
 duckdb>=1.5
 clickhouse-sqlalchemy>=0.3
 clickhouse-driver>=0.2
+sqlglot>=25        # SQL 沙箱 AST 校验（单语句/SELECT 白名单/表白名单）
