@@ -128,6 +128,47 @@ def clean_sql(sql: str) -> str:
     return sql.strip()
 
 
+def execute_duckdb_sql(dataset, sql: str):
+    """在数据集物化的 DuckDB 文件上执行只读 SQL（对话/重跑/导出共用）。
+
+    只读短连接（见 materialize.connect_readonly），连接层即数据隔离——
+    只挂载该数据集文件，平台库与其他数据集不可达。
+    """
+    from apps.datasets.services.materialize import connect_readonly
+    with connect_readonly(dataset) as con:
+        result = con.execute(sql)
+        columns = [d[0] for d in result.description]
+        rows = result.fetchall()
+
+    check_duplicate_columns(columns)
+    column_types = _infer_py_types(columns, rows)
+    sanitized = [_sanitize_for_json(dict(zip(columns, row))) for row in rows]
+    return sanitized, column_types
+
+
+def execute_duckdb_multi_sql(datasets: list, sql: str):
+    """多数据集联邦执行：内存连接 ATTACH 各数据集库文件（t1/t2/t3 只读）。
+
+    连接层隔离：只挂载参与数据集的文件，SQL 引用其他库/平台表不可达。
+    """
+    import duckdb as duckdb_lib
+    from apps.datasets.services.materialize import duckdb_path
+    con = duckdb_lib.connect()
+    try:
+        for i, ds in enumerate(datasets, 1):
+            con.execute(f"ATTACH '{duckdb_path(ds)}' AS t{i} (READ_ONLY)")
+        result = con.execute(sql)
+        columns = [d[0] for d in result.description]
+        rows = result.fetchall()
+    finally:
+        con.close()
+
+    check_duplicate_columns(columns)
+    column_types = _infer_py_types(columns, rows)
+    sanitized = [_sanitize_for_json(dict(zip(columns, row))) for row in rows]
+    return sanitized, column_types
+
+
 def execute_select_sql(sql: str, infer_types: bool = False):
     """执行 SELECT SQL 并返回净化后的结果行。
 
@@ -188,7 +229,33 @@ def _infer_py_types(columns: list, rows: list) -> dict:
 
 # ===== Prompt 模板化管理 =====
 
-SQL_GENERATE_SYSTEM = Template("""你是一个专业的SQL生成助手。根据以下信息生成PostgreSQL SQL查询。
+# DuckDB 物化方言规则（NL2SQLService 与 ChatService 共用单一来源）
+DUCKDB_SQL_RULES = """- 数据已物化为 DuckDB 表 data（列有真实类型），直接用列名引用，数值列直接比较，无需类型转换
+- 表名固定为 data（FROM data）；中文/特殊列名用双引号引用，如 "区域"
+- 不要使用 LIMIT 以外的结果限制方式
+- ORDER BY 排序时加 NULLS LAST（避免空值占满 LIMIT 结果）"""
+
+SQL_GENERATE_SYSTEM = Template("""你是一个专业的SQL生成助手。根据以下信息生成SQL查询。
+
+数据已物化为 DuckDB 表 data（每数据集一个库文件，列有真实类型）。
+
+$schema_summary
+
+业务说明（数据字典/字段业务含义，帮助理解数据语义）:
+$business_description
+
+相似查询案例:
+$few_shot_cases
+
+规则:
+1. 只生成 SELECT 语句，直接用列名引用（数值列直接比较，无需类型转换）
+2. 中文/特殊列名用双引号引用，如 "区域"
+3. 不要使用 LIMIT 以外的结果限制方式
+4. ORDER BY 排序时加 NULLS LAST（避免空值占满 LIMIT 结果）
+""")
+
+# 存量未迁移数据集的 JSONB 方言（惰性物化失败的回退路径）
+SQL_GENERATE_LEGACY_SYSTEM = Template("""你是一个专业的SQL生成助手。根据以下信息生成PostgreSQL SQL查询。
 
 数据存储在 dataset_rows 表中，每行数据存储在 data 字段(JSONB)中。
 
@@ -216,12 +283,37 @@ SQL_FIX_SYSTEM = Template("""你是一个SQL修复专家。之前生成的SQL执
 $schema_summary
 
 规则:
-1. ORDER BY 排序时必须加 NULLS LAST（PostgreSQL 默认 DESC 时 NULL 排最前）
+1. ORDER BY 排序时必须加 NULLS LAST
 """)
 
 # ===== 多数据集联合查询 prompt =====
 
-SQL_GENERATE_MULTI_SYSTEM = Template("""你是一个专业的SQL生成助手。根据以下信息生成PostgreSQL SQL查询。
+SQL_GENERATE_MULTI_SYSTEM = Template("""你是一个专业的SQL生成助手。根据以下信息生成SQL查询。
+
+多个数据集各自物化为 DuckDB 表：别名 t1/t2/t3 对应各自库文件中的表 t{n}.data
+（列有真实类型）。跨数据集问题用 JOIN 关联。
+
+$schema_summary
+
+各数据集业务说明:
+$business_description
+
+相似查询案例:
+$few_shot_cases
+
+规则:
+1. 只生成 SELECT 语句
+2. 每个数据集的表写成"FROM t1.data t1"（库名.表名 + 同名别名），列引用用别名前缀，
+   如 t1.列名；中文/特殊列名用双引号，如 t1."区域"
+3. JOIN 条件优先使用上方"疑似关联列"提示；没有提示时根据列语义和 top 值自行判断
+4. 所有 SELECT 列必须加 AS 别名，用简洁英文（不同数据集可能有同名列，不加别名会报"列名重复"错误）
+5. 优先"各自 GROUP BY 聚合后再 JOIN"，避免两个大数据集直接 JOIN 导致行数爆炸
+6. 不要使用 LIMIT 以外的结果限制方式
+7. ORDER BY 排序时必须加 NULLS LAST
+""")
+
+# 存量未迁移数据集的多表 JSONB 方言（回退路径）
+SQL_GENERATE_MULTI_LEGACY_SYSTEM = Template("""你是一个专业的SQL生成助手。根据以下信息生成PostgreSQL SQL查询。
 
 多个数据集存储在同一张 dataset_rows 表中（每行数据在 data 字段 JSONB 里），
 用"别名 + dataset_id 过滤"区分各数据集的行，跨数据集问题用 JOIN 关联。
@@ -250,9 +342,9 @@ SQL_FIX_MULTI_SYSTEM = Template("""你是一个SQL修复专家。之前生成的
 $schema_summary
 
 规则:
-1. 列引用必须带别名前缀（如 t1.data->>'列名'），所有 SELECT 列必须有 AS 别名
-2. 每个用到的别名都必须带 dataset_id 过滤条件
-3. ORDER BY 排序时必须加 NULLS LAST
+1. 每个数据集的表写成"FROM t1.data t1"（库名.表名 + 同名别名），列引用用别名前缀，
+   所有 SELECT 列必须有 AS 别名
+2. ORDER BY 排序时必须加 NULLS LAST
 """)
 
 SQL_FIX_USER = Template("问题: $question\n\n失败的SQL: $failed_sql\n\n错误信息: $error_msg\n\n请生成修复后的SQL（只输出SQL语句）:")
@@ -281,8 +373,10 @@ class NL2SQLService:
         self.dataset = self.datasets[0]
         self.is_multi = len(self.datasets) > 1
         # dataset_id 白名单：SQL 中出现的 uuid 字面量必须都在这里
-        # （防 LLM 幻觉引用未授权数据集，单表/多表统一校验）
+        # （防 LLM 幻觉引用未授权数据集，单表/多表统一校验；仅 JSONB 旧路径使用）
         self._allowed_dataset_ids = {str(ds.id).lower() for ds in self.datasets}
+        # DuckDB 方言开关（query() 入口按物化状态决定；存量回退 JSONB）
+        self._use_duckdb = False
         self.llm = ChatOpenAI(
             model=settings.LLM_MODEL,
             temperature=0,
@@ -290,6 +384,13 @@ class NL2SQLService:
             openai_api_base=settings.LLM_API_BASE,
         )
         self._current_question: str = ''  # query() 入口写入，供 _get_few_shot_cases 生成向量
+
+    def _prepare_engine(self) -> None:
+        """按物化状态选执行引擎：全部参与数据集已物化 → DuckDB 联邦，
+        否则回退 JSONB 旧路径（惰性物化失败/存量数据集）。"""
+        from apps.datasets.services.materialize import ensure_materialized
+        self._use_duckdb = all(
+            ensure_materialized(ds) for ds in self.datasets)
 
     # ===== Schema 发现 =====
 
@@ -332,13 +433,16 @@ class NL2SQLService:
         if question_vec is not None:
             # 语义检索：annotate 计算余弦距离，按距离升序取最近 3 条
             # 多数据集联合查询取"任一参与数据集"的历史（语义相关的自然浮出）
+            base = QueryHistory.objects.filter(
+                dataset__in=self.datasets,
+                is_success=True,
+                question_embedding__isnull=False,
+            )
+            if self._use_duckdb:
+                # 方言隔离：排除 JSONB 时代的 data->>'col' SQL，防教坏新 prompt
+                base = base.exclude(generated_sql__contains='data->>')
             cases = list(
-                QueryHistory.objects
-                .filter(
-                    dataset__in=self.datasets,
-                    is_success=True,
-                    question_embedding__isnull=False,
-                )
+                base
                 .annotate(distance=CosineDistance('question_embedding', question_vec))
                 .order_by('distance')[:3]
             )
@@ -349,9 +453,12 @@ class NL2SQLService:
             # 该数据集还没有向量化历史，降级到时间倒序
 
         # 降级：embedding 失败 或 无向量化历史 → 时间倒序取 3 条
-        cases = QueryHistory.objects.filter(
+        base = QueryHistory.objects.filter(
             dataset__in=self.datasets, is_success=True
-        ).order_by('-created_at')[:3]
+        )
+        if self._use_duckdb:
+            base = base.exclude(generated_sql__contains='data->>')
+        cases = base.order_by('-created_at')[:3]
         if not cases:
             return '无'
         return '\n\n'.join(
@@ -365,7 +472,13 @@ class NL2SQLService:
         return strip_sql_comments(sql)
 
     def _validate_sql(self, sql: str) -> bool:
-        """只读 SQL 校验 + dataset_id 白名单（见模块级 validate_select_sql）。"""
+        """只读 SQL 校验（见模块级 validate_select_sql）。
+
+        DuckDB 路径连接层即隔离（只挂载参与数据集文件），不做 uuid 白名单；
+        JSONB 旧路径保留白名单防 LLM 幻觉引用未授权数据集。
+        """
+        if self._use_duckdb:
+            return validate_select_sql(sql)
         return validate_select_sql(sql, self._allowed_dataset_ids)
 
     def _add_limit(self, sql: str) -> str:
@@ -382,9 +495,15 @@ class NL2SQLService:
         return text.replace('{', '{{').replace('}', '}}')
 
     def _generate_sql(self, question: str, schema_info: dict) -> str:
-        generate_template = (
-            SQL_GENERATE_MULTI_SYSTEM if self.is_multi else SQL_GENERATE_SYSTEM
-        )
+        if self._use_duckdb:
+            generate_template = (
+                SQL_GENERATE_MULTI_SYSTEM if self.is_multi else SQL_GENERATE_SYSTEM
+            )
+        else:
+            generate_template = (
+                SQL_GENERATE_MULTI_LEGACY_SYSTEM if self.is_multi
+                else SQL_GENERATE_LEGACY_SYSTEM
+            )
         prompt = ChatPromptTemplate.from_messages([
             ('system', self._escape_braces(generate_template.safe_substitute(
                 schema_summary=schema_info['schema_summary'],
@@ -422,10 +541,15 @@ class NL2SQLService:
     def _execute_sql(self, sql: str) -> tuple:
         """执行 SQL，返回 (净化后的 rows, 列类型映射)。
 
-        复用模块级 execute_select_sql（与导出/重跑共用执行逻辑）。
+        DuckDB 路径：单表走只读文件连接，多表走 ATTACH 联邦；
+        JSONB 旧路径：Django cursor（平台 PG）。
         列类型在 sanitize 前推断——_sanitize_for_json 会把 Decimal→float、
         datetime→ISO 字符串，类型信息丢失后再推断不准。
         """
+        if self._use_duckdb:
+            if self.is_multi:
+                return execute_duckdb_multi_sql(self.datasets, sql)
+            return execute_duckdb_sql(self.dataset, sql)
         return execute_select_sql(sql, infer_types=True)
 
     # ===== 主流程 =====
@@ -433,6 +557,9 @@ class NL2SQLService:
     def query(self, question: str) -> dict:
         start_time = time.time()
         self._current_question = question  # 供 _get_few_shot_cases 生成 embedding
+
+        # 0. 引擎选择（惰性物化；失败回退 JSONB 旧路径）
+        self._prepare_engine()
 
         # 1. Schema发现
         schema_info = self._discover_schema()

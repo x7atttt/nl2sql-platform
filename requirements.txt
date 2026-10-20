@@ -22,3 +22,6 @@ pgvector>=0.3,<0.4
 pymysql>=1.1,<2.0
 cryptography>=42.0
 pyarrow>=16.0
+
+# 文件数据集物化引擎（上传快照一次性写入，查询只读并发安全）
+duckdb>=1.5

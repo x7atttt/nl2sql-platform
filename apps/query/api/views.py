@@ -268,7 +268,7 @@ class QueryRerunView(APIView):
         # 4. 重跑：复用 ExportService（已含自动 LIMIT 1000）
         from apps.export.services.exporter import ExportService
         try:
-            data = ExportService.execute_query(history.generated_sql)
+            data = ExportService.execute_query(history)
         except Exception as e:
             return Response(
                 {'error': f'重跑失败：{e}'},
@@ -379,12 +379,23 @@ class ChartSuggestView(APIView):
 
         # 3. 重新执行 SQL 取 data + column_types（复用公共执行器）
         #    不用 result_preview（只有 20 行），LLM 需要完整结果统计
-        from apps.query.services.nl2sql import execute_select_sql
+        from apps.query.services.nl2sql import (
+                execute_select_sql, execute_duckdb_sql, execute_duckdb_multi_sql,
+            )
         from apps.query.services.chart_advisor import suggest_chart
         try:
-            data, column_types = execute_select_sql(
-                history.generated_sql, infer_types=True,
-            )
+            if history.execution_engine == 'duckdb':
+                multi = list(history.datasets.all())
+                if multi:
+                    data, column_types = execute_duckdb_multi_sql(
+                        multi, history.generated_sql)
+                else:
+                    data, column_types = execute_duckdb_sql(
+                        history.dataset, history.generated_sql)
+            else:
+                data, column_types = execute_select_sql(
+                    history.generated_sql, infer_types=True,
+                )
         except Exception as e:
             return Response(
                 {'success': False, 'reason': f'重跑查询失败：{e}'},

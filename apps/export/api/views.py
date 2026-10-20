@@ -56,7 +56,7 @@ class ExportView(APIView):
 
         # 重新执行 SQL 获取数据
         try:
-            data = ExportService.execute_query(query.generated_sql)
+            data = ExportService.execute_query(query)
         except Exception as e:
             return Response(
                 {'error': f'重新执行查询失败: {str(e)}'},

@@ -11,24 +11,30 @@ logger = get_task_logger(__name__)
     acks_late=True,
 )
 def process_large_file(self, dataset_id: str):
-    """异步处理大文件（>=10MB）
+    """异步处理大文件（>=10MB）：分块清洗后物化为 DuckDB 文件。
 
     指数退避重试：2^n 秒（1→2→4→8→16），最多5次。
     超过5次标记为 failed（死信队列），Admin 后台可见。
     """
-    from apps.datasets.models import Dataset, DataRow
+    from apps.datasets.models import Dataset
     from apps.datasets.services.parser import (
-        clean_dataframe,
-        validate_dataframe_size,
-        DatasetTooLargeError,
+        clean_dataframe, validate_dataframe_size, DatasetTooLargeError,
         MAX_ROWS_PER_DATASET,
     )
+    from apps.datasets.services.materialize import (
+        create_table_from_df, append_df, delete_duckdb,
+    )
+    import duckdb as duckdb_lib
     import pandas as pd
 
+    con = None
     try:
         dataset = Dataset.objects.get(id=dataset_id)
         dataset.status = 'processing'
         dataset.save(update_fields=['status', 'updated_at'])
+
+        # 重试可能留下半成品文件，先清（duckdb 库文件损坏会让重试必败）
+        delete_duckdb(dataset)
 
         chunk_size = 10000
         total_rows = 0
@@ -44,10 +50,7 @@ def process_large_file(self, dataset_id: str):
             chunk_df = clean_dataframe(chunk_df)
 
             # 规模校验：列数（首个 chunk 即可判断）+ 累计行数
-            # 分块读取没有完整 DataFrame，所以列数校验放循环内首个 chunk，
-            # 行数校验用累加 total_rows 比对上限，超限立即中止避免继续写入。
             if total_rows == 0:
-                # 首个 chunk：校验列数 + 行数是否已超
                 validate_dataframe_size(chunk_df)
             elif total_rows + len(chunk_df) > MAX_ROWS_PER_DATASET:
                 raise DatasetTooLargeError(
@@ -55,23 +58,23 @@ def process_large_file(self, dataset_id: str):
                     f'请拆分或筛选后上传'
                 )
 
-            # 性能优化：用 to_dict('records') 向量化转换替代 iterrows() 逐行遍历
-            # iterrows 每行生成一个 Series 对象，开销极大；to_dict('records') 一次性
-            # 转换为 dict 列表，与同步路径 parser.bulk_create_rows 实现统一。
-            # 实测 50 万行处理耗时下降约 40%。
-            records = chunk_df.to_dict('records')
-            rows = [
-                DataRow(dataset=dataset, row_index=total_rows + i, data=rec)
-                for i, rec in enumerate(records)
-            ]
-            DataRow.objects.bulk_create(rows, batch_size=1000)
+            if con is None:
+                # 首块：建表（类型推断）；后续块：追加。单连接贯穿全部分块
+                from apps.datasets.services.materialize import _write_connect
+                con = _write_connect(dataset)
+                create_table_from_df(con, chunk_df)
+            else:
+                append_df(con, chunk_df)
 
             total_rows += len(chunk_df)
             _send_progress(dataset_id, total_rows)
+        con.close()
+        con = None
 
         dataset.row_count = total_rows
+        dataset.column_count = len(chunk_df.columns)
         dataset.status = 'completed'
-        dataset.save(update_fields=['row_count', 'status', 'updated_at'])
+        dataset.save(update_fields=['row_count', 'column_count', 'status', 'updated_at'])
         _send_progress(dataset_id, total_rows, status='completed')
 
         # 处理完成 → 异步生成推荐查询（不阻塞进度推送，LLM 7 秒）
@@ -90,9 +93,10 @@ def process_large_file(self, dataset_id: str):
 
     except Exception as exc:
         logger.error(f'处理数据集 {dataset_id} 失败: {exc}')
-
+        # 清理半成品物化文件，避免损坏的库文件阻塞重试
         try:
             dataset = Dataset.objects.get(id=dataset_id)
+            delete_duckdb(dataset)
         except Dataset.DoesNotExist:
             return
 
@@ -105,6 +109,12 @@ def process_large_file(self, dataset_id: str):
             dataset.save(update_fields=['status', 'updated_at'])
             _send_progress(dataset_id, 0, status='failed')
             logger.error(f'数据集 {dataset_id} 重试{self.max_retries}次后仍然失败，进入死信队列')
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
 
 
 def _send_progress(dataset_id: str, total_rows: int, status: str = 'processing'):

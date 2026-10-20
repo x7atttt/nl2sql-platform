@@ -23,7 +23,8 @@ from django.conf import settings
 
 from apps.query.models import QueryHistory, ChatMessage
 from apps.query.services.nl2sql import (
-    execute_select_sql, validate_select_sql, add_limit_clause, clean_sql,
+    execute_select_sql, execute_duckdb_sql,
+    validate_select_sql, add_limit_clause, clean_sql,
     _sanitize_for_json,
 )
 from apps.query.services.trace import new_trace_id, span
@@ -96,7 +97,13 @@ CHAT_FIX_USER = Template("""问题: $question
 
 请修复后重新输出（只输出 JSON 对象）:""")
 
-# chat_file：JSONB 单表方言（DuckDB 物化落地后只换这一段，管线不动）
+# chat_file：已物化数据集走 DuckDB 方言（新上传默认路径）
+_DUCKDB_SQL_RULES = """- 数据已物化为 DuckDB 表 data（列有真实类型），直接用列名引用，数值列直接比较，无需类型转换
+- 表名固定为 data（FROM data）；中文/特殊列名用双引号引用，如 "区域"
+- 不要使用 LIMIT 以外的结果限制方式
+- ORDER BY 排序时加 NULLS LAST（避免空值占满 LIMIT 结果）"""
+
+# chat_file：存量未迁移数据集沿用 JSONB 单表方言（惰性物化失败的回退路径）
 _FILE_SQL_RULES = Template("""- 数据存储在 dataset_rows 表中，每行数据在 data 字段(JSONB)里
 - 文本值用 data->>'列名'，数值比较用 (data->>'列名')::numeric
 - 必须包含 WHERE dataset_id = '$dataset_id' 过滤条件
@@ -138,6 +145,8 @@ class ChatService:
         self._pending_user_msg_id = None
         # 本轮 trace_id（stream() 入口生成；None 时埋点跳过，供无 trace 场景直调）
         self._trace_id = None
+        # chat_file 方言开关：已物化走 DuckDB，否则回退 JSONB 旧路径
+        self._use_duckdb = False
         self.llm = ChatOpenAI(
             model=settings.LLM_MODEL,
             temperature=0,
@@ -157,6 +166,8 @@ class ChatService:
 
     def _sql_rules(self) -> str:
         if self.dataset:
+            if self._use_duckdb:
+                return _DUCKDB_SQL_RULES
             return _FILE_SQL_RULES.substitute(dataset_id=self.dataset.id)
         return _EXTERNAL_SQL_RULES.substitute(
             db_type_name=_DB_TYPE_NAMES[self.source.db_type],
@@ -189,8 +200,13 @@ class ChatService:
         from apps.query.services.embedding import embed_question
 
         base = QueryHistory.objects.filter(is_success=True)
-        base = (base.filter(dataset=self.dataset) if self.dataset
-                else base.filter(source=self.source))
+        if self.dataset:
+            base = base.filter(dataset=self.dataset)
+            if self._use_duckdb:
+                # 方言隔离：排除 JSONB 时代的 data->>'col' 方言 SQL，防教坏新 prompt
+                base = base.exclude(generated_sql__contains='data->>')
+        else:
+            base = base.filter(source=self.source)
 
         question_vec = None
         # 注：此 span 嵌套在 llm span 内（prompt 组装阶段），时间线按完成顺序展示
@@ -290,12 +306,16 @@ class ChatService:
     # ===== 校验与执行 =====
 
     def _validate(self, sql: str) -> bool:
-        if self.dataset:
-            # dataset_id 白名单：防 LLM 幻觉引用未授权数据集
+        if self.dataset and not self._use_duckdb:
+            # JSONB 旧路径：dataset_id 白名单防 LLM 幻觉引用未授权数据集。
+            # DuckDB 路径：只读连接只挂载本数据集文件，跨数据集从连接层不可达
+            # （与外部源同款隔离论证），无需白名单。
             return validate_select_sql(sql, {str(self.dataset.id).lower()})
         return validate_select_sql(sql)
 
     def _execute(self, sql: str) -> tuple:
+        if self.dataset and self._use_duckdb:
+            return execute_duckdb_sql(self.dataset, sql)
         if self.dataset:
             return execute_select_sql(sql, infer_types=True)
         from apps.datasources.services.engine import create_engine_for_source
@@ -334,6 +354,10 @@ class ChatService:
             dataset=self.dataset, source=self.source,
             user=self.conversation.user,
             question=question, generated_sql=sql or '',
+            execution_engine=(
+                'duckdb' if self.dataset and self._use_duckdb
+                else 'platform-pg' if self.dataset
+                else self.source.db_type),
             is_success=success, error_message=error or '',
             execution_time_ms=elapsed_ms,
             result_count=len(rows) if success and rows else 0,
@@ -365,6 +389,10 @@ class ChatService:
         """
         start_time = time.time()
         self._trace_id = new_trace_id()
+        # chat_file：存量数据集惰性物化（失败回退 JSONB 旧路径，见 _use_duckdb）
+        if self.dataset:
+            from apps.datasets.services.materialize import ensure_materialized
+            self._use_duckdb = ensure_materialized(self.dataset, self._trace_id)
 
         round_index = (ChatMessage.objects.filter(
             conversation=self.conversation
@@ -422,7 +450,8 @@ class ChatService:
         for attempt in range(self.MAX_RETRIES + 1):
             try:
                 with span(self._trace_id, 'sql_execute', '执行SQL', attempt=attempt,
-                          engine=('platform' if self.dataset
+                          engine=('duckdb' if self._use_duckdb
+                                  else 'platform-pg' if self.dataset
                                   else self.source.db_type)) as s:
                     rows, column_types = self._execute(sql)
                     s.attrs['rows'] = len(rows)

@@ -59,11 +59,35 @@ def invalidate_schema_cache(dataset_id) -> None:
 
 
 def _load_dataframe(dataset: Dataset, max_rows: int = MAX_ROWS) -> dict:
-    """从 DataRow 加载数据到 DataFrame
+    """加载 Dataset 数据到 DataFrame（双路径）。
 
+    物化数据集（新上传/已惰性迁移）：DuckDB 只读查询（引擎内截断，快）；
+    存量数据集（DataRow JSONB 时代且未迁移）：沿用 ORM 迭代读取。
     Returns:
         {'df': DataFrame, 'types': dict, 'total_rows': int, 'sampled': bool}
     """
+    from apps.datasets.services.materialize import connect_readonly
+    try:
+        with connect_readonly(dataset) as con:
+            df = con.execute(
+                f'SELECT * FROM data LIMIT {int(max_rows)}'
+            ).df()
+            total_rows = con.execute('SELECT COUNT(*) FROM data').fetchone()[0]
+        # duckdb 列名恒为字符串；None 统一为 NaN 供下方统计逻辑处理
+        df = df.where(pd.notnull(df), None)
+    except FileNotFoundError:
+        return _load_dataframe_legacy(dataset, max_rows)
+
+    return {
+        'df': df,
+        'types': _classify_columns(df),
+        'total_rows': total_rows,
+        'sampled': total_rows > max_rows,
+    }
+
+
+def _load_dataframe_legacy(dataset: Dataset, max_rows: int = MAX_ROWS) -> dict:
+    """存量 JSONB 路径加载（DataRow 未迁移的数据集）。"""
     rows = []
     total_rows = 0
     for data in (
@@ -89,11 +113,9 @@ def _load_dataframe(dataset: Dataset, max_rows: int = MAX_ROWS) -> dict:
         }
 
     df = pd.DataFrame(rows)
-    types = _classify_columns(df)
-
     return {
         'df': df,
-        'types': types,
+        'types': _classify_columns(df),
         'total_rows': actual_count,
         'sampled': sampled,
     }
@@ -287,8 +309,14 @@ def get_schema_summary(dataset: Dataset) -> str:
     parts = _compute_schema_parts(dataset)
     if parts['body'] == '数据集为空':
         return '数据集为空'
+    from apps.datasets.services.materialize import is_materialized
+    if is_materialized(dataset):
+        header = (f'Table: data (共 {parts["total_rows"]} 行，DuckDB 物化表，'
+                  f'列有真实类型，中文/特殊列名用双引号引用)')
+    else:
+        header = f'Table: dataset_rows (共 {parts["total_rows"]} 行)'
     result = (
-        f'Table: dataset_rows (共 {parts["total_rows"]} 行)\n\n'
+        f'{header}\n\n'
         f'Columns:\n{parts["body"]}'
     )
 
@@ -330,12 +358,13 @@ def _schema_parts_cached(dataset: Dataset) -> dict:
     return parts
 
 
-def _build_join_hints(alias_parts: dict) -> list:
+def _build_join_hints(alias_parts: dict, duckdb_mode: bool = False) -> list:
     """两两比对数据集的文本列 top 值重叠度，产出"疑似关联列"提示。
 
     判定标准（宽松取并集，宁可多提示让 LLM 参考）：
     - 共同值 ≥ 2 且（重叠率 ≥ 50% 或共同值 ≥ 3）
     重叠率 = 共同值数 / 较小一方的 top 值数
+    列引用格式随执行引擎：DuckDB 用 别名."列"，JSONB 旧路径用 别名.data->>'列'。
     """
     hints = []
     aliases = list(alias_parts)
@@ -354,9 +383,12 @@ def _build_join_hints(alias_parts: dict) -> list:
                     smaller = min(len(set_a), len(set_b)) or 1
                     if len(common) / smaller >= 0.5 or len(common) >= 3:
                         preview = ', '.join(sorted(common)[:5])
+                        if duckdb_mode:
+                            ref_a, ref_b = f'{a}."{col_a}"', f'{b}."{col_b}"'
+                        else:
+                            ref_a, ref_b = f"{a}.data->>'{col_a}'", f"{b}.data->>'{col_b}'"
                         hints.append(
-                            f"  {a}.data->>'{col_a}' ≈ {b}.data->>'{col_b}'"
-                            f'（共同值: {preview}）'
+                            f'  {ref_a} ≈ {ref_b}（共同值: {preview}）'
                         )
     return hints
 
@@ -364,22 +396,27 @@ def _build_join_hints(alias_parts: dict) -> list:
 def get_multi_schema_summary(datasets: list) -> str:
     """生成多数据集联合 schema 摘要，供联合查询 prompt 注入。
 
-    结构：每个数据集一段（别名 + dataset_id + 列统计）+ 疑似关联列提示。
-    别名与 dataset_id 是 LLM 写 JOIN SQL 的关键锚点——
-    LLM 用别名引用各数据集的行，用 dataset_id 做 WHERE 过滤。
+    结构：每个数据集一段（别名 + 表引用 + 列统计）+ 疑似关联列提示。
+    表引用随执行引擎：全部物化时用 DuckDB 联邦表 t{n}.data（NL2SQLService
+    按同一条件选引擎），否则用 dataset_rows + dataset_id 过滤（旧路径）。
     """
+    from apps.datasets.services.materialize import is_materialized
+    duckdb_mode = all(is_materialized(ds) for ds in datasets)
+
     sections = []
     alias_parts = {}
     for alias, ds in zip(_MULTI_ALIASES, datasets):
         parts = _schema_parts_cached(ds)
-        sections.append(
-            f"数据集 \"{ds.name}\" (别名 {alias}, dataset_id='{ds.id}', "
-            f"共 {parts['total_rows']} 行)\n"
-            f'Columns:\n{parts["body"]}'
-        )
+        if duckdb_mode:
+            head = (f'数据集 "{ds.name}" (表 {alias}.data，引用写法 FROM {alias}.data {alias}，'
+                    f'共 {parts["total_rows"]} 行)')
+        else:
+            head = (f"数据集 \"{ds.name}\" (别名 {alias}, dataset_id='{ds.id}', "
+                    f"共 {parts['total_rows']} 行)")
+        sections.append(f'{head}\nColumns:\n{parts["body"]}')
         alias_parts[alias] = parts
 
-    hints = _build_join_hints(alias_parts)
+    hints = _build_join_hints(alias_parts, duckdb_mode)
     if hints:
         sections.append(
             '疑似关联列（值分布高度重叠，JOIN 时优先使用这些列做关联条件）:\n'

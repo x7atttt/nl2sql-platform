@@ -1,7 +1,7 @@
 import pandas as pd
 from django.db import transaction#保证数据库原子性
 
-from apps.datasets.models import Dataset, DataRow
+from apps.datasets.models import Dataset
 
 
 ALLOWED_EXTENSIONS = ('.csv', '.xlsx', '.xls', '.json', '.jsonl', '.parquet')
@@ -38,17 +38,19 @@ def validate_dataframe_size(df: pd.DataFrame) -> None:
 
 
 def delete_dataset_completely(dataset: Dataset) -> None:
-    """彻底清理 dataset：删除文件 + 删除记录。
+    """彻底清理 dataset：删除文件 + 物化库 + 删除记录。
 
     超限等不可恢复的错误用此函数清理，避免留下 failed 状态的垃圾记录
     和 media 目录的残留文件。同步路径和异步路径共用。
     """
     # 失效 schema 缓存（数据集要删了）
     from apps.datasets.services.analyzer import invalidate_schema_cache
+    from apps.datasets.services.materialize import delete_duckdb
     try:
         invalidate_schema_cache(dataset.id)
     except Exception:
         pass  # 缓存清理失败不阻塞删除主流程
+    delete_duckdb(dataset)  # 物化文件与 Dataset 生命周期绑定（幂等）
     # 先删文件（file.delete(save=False) 不触发 ORM save，避免循环）
     try:
         dataset.file.delete(save=False)
@@ -58,16 +60,17 @@ def delete_dataset_completely(dataset: Dataset) -> None:
 
 
 def parse_file_sync(dataset: Dataset) -> None:
-    """同步解析文件（<10MB）"""
+    """同步解析文件（<10MB）：清洗后物化为 DuckDB 文件（不再写 DataRow）。"""
+    from apps.datasets.services.materialize import materialize_dataset
     try:
         dataset.status = 'processing'
         dataset.save(update_fields=['status', 'updated_at'])#保存指定字段
-        
+
         with transaction.atomic():
             df = _read_file(dataset.file.path, dataset.file_name)
             validate_dataframe_size(df)
             df = clean_dataframe(df)
-            bulk_create_rows(dataset, df)
+            materialize_dataset(dataset, df)
 
             dataset.row_count = len(df)
             dataset.column_count = len(df.columns)
@@ -147,19 +150,5 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.astype(object).where(pd.notnull(df), None)
     df = df.replace([float('inf'), float('-inf')], None)
     return df
-
-
-def bulk_create_rows(dataset: Dataset, df: pd.DataFrame, batch_size: int = 1000):
-    records = df.to_dict('records')
-    for i in range(0, len(records), batch_size):
-        batch = [
-            DataRow(
-                dataset=dataset,
-                row_index=i + j,
-                data=rec,
-            )
-            for j, rec in enumerate(records[i:i + batch_size])
-        ]
-        DataRow.objects.bulk_create(batch, batch_size=batch_size)
 
 

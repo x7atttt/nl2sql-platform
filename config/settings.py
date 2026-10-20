@@ -137,6 +137,10 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# 文件数据集物化目录（每数据集一个 .duckdb 文件，与 Dataset 生命周期绑定：
+# 删数据集 = 删文件）。文件名由 dataset.id 派生，无碰撞无额外映射字段。
+DUCKDB_DATA_DIR = MEDIA_ROOT / 'duckdb'
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS
