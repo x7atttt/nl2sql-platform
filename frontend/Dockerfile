@@ -15,7 +15,7 @@ COPY package.json pnpm-lock.yaml ./
 # 注：peer deps 由 lockfile 的 settings.autoInstallPeers=true 控制，不需要额外参数
 # --mount=type=cache 持久化 pnpm store，二次构建复用下载
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+	pnpm install --frozen-lockfile
 
 COPY . .
 

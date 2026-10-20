@@ -18,6 +18,10 @@
           <el-icon><FolderOpened /></el-icon>
           <template #title>数据集</template>
         </el-menu-item>
+        <el-menu-item v-if="!isViewer" index="/datasources">
+          <el-icon><Coin /></el-icon>
+          <template #title>数据源</template>
+        </el-menu-item>
         <el-menu-item index="/query/history">
           <el-icon><Clock /></el-icon>
           <template #title>查询历史</template>
@@ -87,6 +91,8 @@ const activeMenu = computed(() => {
 })
 
 const isAdmin = computed(() => store.user?.role === 'admin')
+// 数据源管理/查询需 analyst 及以上（viewer 无入口）
+const isViewer = computed(() => store.user?.role === 'viewer')
 
 const avatarLetter = computed(() => (store.user?.username || 'U')[0].toUpperCase())
 

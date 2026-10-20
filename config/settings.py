@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     'apps.datasets',
     'apps.query',
     'apps.export',
+    'apps.datasources',
 ]
 
 MIDDLEWARE = [
@@ -165,3 +166,7 @@ LLM_MODEL = os.environ.get('LLM_MODEL', 'deepseek-v4-flash')
 # 与 LLM 分开配置：DeepSeek 不提供 embedding 接口，embedding 留智谱
 EMBEDDING_API_KEY = os.environ.get('EMBEDDING_API_KEY', '')
 EMBEDDING_API_BASE = os.environ.get('EMBEDDING_API_BASE', 'https://open.bigmodel.cn/api/paas/v4')
+
+# 外部数据源凭据加密（Fernet）。未配置时创建数据源接口报错引导生成，
+# 平台其余功能不受影响。生成：python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key())"
+DATASOURCE_ENC_KEY = os.environ.get('DATASOURCE_ENC_KEY', '')

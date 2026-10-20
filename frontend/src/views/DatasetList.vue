@@ -3,6 +3,15 @@
     <div class="page-header">
       <h2>数据集管理</h2>
       <div class="header-actions">
+        <!-- 联合查询：勾选 2-3 个已完成数据集后可用（viewer 也可查询） -->
+        <el-button
+          type="success"
+          :icon="Connection"
+          :disabled="!joinable"
+          @click="goJoinQuery"
+        >
+          联合查询<template v-if="joinableCount > 0">（{{ joinableCount }}）</template>
+        </el-button>
         <el-button-group class="batch-actions" v-if="canShare || canUpload">
           <el-button
             v-if="canShare"
@@ -113,14 +122,14 @@
             :auto-upload="false"
             multiple
             :limit="10"
-            accept=".csv,.xlsx,.xls"
+            accept=".csv,.xlsx,.xls,.json,.jsonl,.parquet"
             :on-change="onFileChange"
             :on-exceed="onExceed"
           >
             <el-button type="primary">选择文件</el-button>
             <template #tip>
               <div class="el-upload__tip">
-                支持 .csv / .xlsx / .xls，单个文件最大 50MB，不超过 10 万行 / 100 列；可批量选择，最多 10 个
+                支持 .csv / .xlsx / .xls / .json / .jsonl / .parquet，单个文件最大 50MB，不超过 10 万行 / 100 列；可批量选择，最多 10 个
               </div>
             </template>
           </el-upload>
@@ -235,7 +244,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Upload, Share, Delete, Document, WarningFilled, View, Search } from '@element-plus/icons-vue'
+import { Upload, Share, Delete, Document, WarningFilled, View, Search, Connection } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { datasetApi, createProgressSocket } from '../api/dataset'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -274,6 +283,19 @@ const selectedIds = ref<string[]>([])
 function handleSelectionChange(rows: any[]) {
   selectedIds.value = rows.map(r => r.id)
   selectedRows.value = rows
+}
+
+// 联合查询：选中 2-3 个"已完成"数据集才可用（后端限制同样为 2-3 个）
+const joinableRows = computed(() =>
+  selectedRows.value.filter(r => r.status === 'completed'),
+)
+const joinableCount = computed(() => joinableRows.value.length)
+const joinable = computed(() =>
+  joinableCount.value >= 2 && joinableCount.value <= 3,
+)
+function goJoinQuery() {
+  const ids = joinableRows.value.map(r => r.id).join(',')
+  router.push({ path: '/join-query', query: { ids } })
 }
 
 // 批量分享弹窗状态

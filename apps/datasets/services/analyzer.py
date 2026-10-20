@@ -49,9 +49,10 @@ def invalidate_schema_cache(dataset_id) -> None:
 
     调用时机：Dataset 删除、DataRow 大规模变更（重新解析）。
     DatasetShare 变更不影响 schema（分享是授权不是数据变化），无需调。
+    同时清单表摘要缓存和多表构件缓存（schema_parts，联合查询用）。
     """
     try:
-        _get_cache_client().delete(_cache_key(dataset_id))
+        _get_cache_client().delete(_cache_key(dataset_id), f'schema_parts:{dataset_id}')
     except Exception:
         # 缓存失效失败不阻塞主流程（最坏情况是读到旧缓存，TTL 7 天兜底）
         logger.warning('invalidate_schema_cache failed for %s', dataset_id)
@@ -180,38 +181,23 @@ def get_column_stats(dataset: Dataset, loaded: dict | None = None) -> dict:
     }
 
 
-def get_schema_summary(dataset: Dataset) -> str:
-    """生成结构化 schema 摘要，供 NL2SQL prompt 注入。
+def _compute_schema_parts(dataset: Dataset) -> dict:
+    """一次加载数据，产出 schema 摘要的两类构件（无缓存）。
 
-    带 Redis 缓存：项目是"上传快照"模式，数据集不变则 schema 也不变，
-    重复计算是纯浪费。第一次算完缓存，后续查询命中缓存省 90%+ 成本。
-    数据集删除/重新解析时调 invalidate_schema_cache 主动失效。
+    Returns:
+        {'body': str, 'text_tops': {col: [top values]}}
+        - body: 列统计 + 样本行文本（不含表头），单表/多表摘要共用
+        - text_tops: 低基数文本列的 top 值列表，供多表"疑似关联列"预检
     """
-    if dataset.status != 'completed':
-        return '数据集尚未处理完成'
-
-    # 读缓存
-    cache_key = _cache_key(dataset.id)
-    try:
-        cached = _get_cache_client().get(cache_key)
-        if cached:
-            return cached
-    except Exception:
-        # Redis 不可用不阻塞主流程，降级为直接计算（和无缓存时一样）
-        logger.warning('schema cache read failed for %s, fallback to compute', dataset.id)
-
     loaded = _load_dataframe(dataset)
     df = loaded['df']
     types = loaded['types']
 
     if df.empty:
-        return '数据集为空'
+        return {'body': '数据集为空', 'text_tops': {}, 'total_rows': loaded['total_rows']}
 
-    lines = [
-        f'Table: dataset_rows (共 {loaded["total_rows"]} 行)',
-        '',
-        'Columns:',
-    ]
+    lines = []
+    text_tops = {}
 
     for col in df.columns:
         col_type = types.get(col, 'text')
@@ -240,17 +226,22 @@ def get_schema_summary(dataset: Dataset) -> str:
             # 对 SQL 生成零价值，却让 schema_summary 膨胀到 13K+ 字符拖慢 LLM。
             total = len(series)
             is_high_cardinality = total > 0 and distinct_count / total >= 0.9
+            top_vals = series.dropna().value_counts().head(5)
             if is_high_cardinality:
                 lines.append(
                     f'  - {col} ({col_type}): {distinct_count} distinct'
                 )
             else:
-                top_vals = series.dropna().value_counts().head(5)
                 # 截断超长值（URL/长描述塞进 prompt 既费 token 又干扰 LLM）
                 top_str = ', '.join(_truncate_value(str(v)) for v in top_vals.index)
                 lines.append(
                     f'  - {col} ({col_type}): {distinct_count} distinct, top: {top_str}'
                 )
+            # 原始 top 值（截断前）无条件记录，供多表关联列预检比对值重叠——
+            # 高基数列（order_id/url 等唯一键）恰是最常见的 JOIN 键，不能排除；
+            # 该数据只用于重叠检测（命中才输出共同值摘要），不进 prompt 正文，
+            # 不影响上面的体积控制。
+            text_tops[col] = [str(v) for v in top_vals.index]
 
     lines.append('')
     lines.append('Sample rows:')
@@ -268,7 +259,38 @@ def get_schema_summary(dataset: Dataset) -> str:
             f'(Note: stats based on {len(df)} row sample of {loaded["total_rows"]} total)'
         )
 
-    result = '\n'.join(lines)
+    return {'body': '\n'.join(lines), 'text_tops': text_tops,
+            'total_rows': loaded['total_rows']}
+
+
+def get_schema_summary(dataset: Dataset) -> str:
+    """生成结构化 schema 摘要，供 NL2SQL prompt 注入。
+
+    带 Redis 缓存：项目是"上传快照"模式，数据集不变则 schema 也不变，
+    重复计算是纯浪费。第一次算完缓存，后续查询命中缓存省 90%+ 成本。
+    数据集删除/重新解析时调 invalidate_schema_cache 主动失效。
+    """
+    if dataset.status != 'completed':
+        return '数据集尚未处理完成'
+
+    # 读缓存
+    cache_key = _cache_key(dataset.id)
+    try:
+        cached = _get_cache_client().get(cache_key)
+        if cached:
+            return cached
+    except Exception:
+        # Redis 不可用不阻塞主流程，降级为直接计算（和无缓存时一样）
+        logger.warning('schema cache read failed for %s, fallback to compute', dataset.id)
+
+    loaded_rows_hint = dataset.row_count
+    parts = _compute_schema_parts(dataset)
+    if parts['body'] == '数据集为空':
+        return '数据集为空'
+    result = (
+        f'Table: dataset_rows (共 {parts["total_rows"]} 行)\n\n'
+        f'Columns:\n{parts["body"]}'
+    )
 
     # 写缓存（数据集不变则 schema 不变，长期缓存）
     try:
@@ -277,6 +299,98 @@ def get_schema_summary(dataset: Dataset) -> str:
         logger.warning('schema cache write failed for %s', dataset.id)
 
     return result
+
+
+# ===== 多数据集联合查询 schema 摘要 =====
+
+# 多表查询的数据集别名（prompt 中 LLM 用别名引用各数据集的行）
+_MULTI_ALIASES = ['t1', 't2', 't3']
+
+
+def _schema_parts_cached(dataset: Dataset) -> dict:
+    """带缓存的 schema 构件（key: schema_parts:{id}，与单表摘要缓存独立）。
+
+    单表 get_schema_summary 缓存的是拼好表头的完整文本，多表需要按
+    "别名 + dataset_id" 重新组织表头，没法复用那份缓存，单独缓存构件。
+    """
+    cache_key = f'schema_parts:{dataset.id}'
+    try:
+        cached = _get_cache_client().get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        logger.warning('schema_parts cache read failed for %s', dataset.id)
+
+    parts = _compute_schema_parts(dataset)
+    try:
+        _get_cache_client().set(cache_key, json.dumps(parts, ensure_ascii=False),
+                                ex=_SCHEMA_CACHE_TTL)
+    except Exception:
+        logger.warning('schema_parts cache write failed for %s', dataset.id)
+    return parts
+
+
+def _build_join_hints(alias_parts: dict) -> list:
+    """两两比对数据集的文本列 top 值重叠度，产出"疑似关联列"提示。
+
+    判定标准（宽松取并集，宁可多提示让 LLM 参考）：
+    - 共同值 ≥ 2 且（重叠率 ≥ 50% 或共同值 ≥ 3）
+    重叠率 = 共同值数 / 较小一方的 top 值数
+    """
+    hints = []
+    aliases = list(alias_parts)
+    for i in range(len(aliases)):
+        for j in range(i + 1, len(aliases)):
+            a, b = aliases[i], aliases[j]
+            tops_a = alias_parts[a]['text_tops']
+            tops_b = alias_parts[b]['text_tops']
+            for col_a, vals_a in tops_a.items():
+                for col_b, vals_b in tops_b.items():
+                    set_a = {v.strip() for v in vals_a if v.strip()}
+                    set_b = {v.strip() for v in vals_b if v.strip()}
+                    common = set_a & set_b
+                    if len(common) < 2:
+                        continue
+                    smaller = min(len(set_a), len(set_b)) or 1
+                    if len(common) / smaller >= 0.5 or len(common) >= 3:
+                        preview = ', '.join(sorted(common)[:5])
+                        hints.append(
+                            f"  {a}.data->>'{col_a}' ≈ {b}.data->>'{col_b}'"
+                            f'（共同值: {preview}）'
+                        )
+    return hints
+
+
+def get_multi_schema_summary(datasets: list) -> str:
+    """生成多数据集联合 schema 摘要，供联合查询 prompt 注入。
+
+    结构：每个数据集一段（别名 + dataset_id + 列统计）+ 疑似关联列提示。
+    别名与 dataset_id 是 LLM 写 JOIN SQL 的关键锚点——
+    LLM 用别名引用各数据集的行，用 dataset_id 做 WHERE 过滤。
+    """
+    sections = []
+    alias_parts = {}
+    for alias, ds in zip(_MULTI_ALIASES, datasets):
+        parts = _schema_parts_cached(ds)
+        sections.append(
+            f"数据集 \"{ds.name}\" (别名 {alias}, dataset_id='{ds.id}', "
+            f"共 {parts['total_rows']} 行)\n"
+            f'Columns:\n{parts["body"]}'
+        )
+        alias_parts[alias] = parts
+
+    hints = _build_join_hints(alias_parts)
+    if hints:
+        sections.append(
+            '疑似关联列（值分布高度重叠，JOIN 时优先使用这些列做关联条件）:\n'
+            + '\n'.join(hints)
+        )
+    else:
+        sections.append(
+            '（未发现明显关联列：未检测到值分布重叠的列对。'
+            '如问题确需多数据集关联，请根据列语义自行判断 JOIN 条件）'
+        )
+    return '\n\n'.join(sections)
 
 
 def get_dataset_overview(dataset: Dataset, loaded: dict | None = None) -> dict:

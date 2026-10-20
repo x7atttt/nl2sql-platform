@@ -4,7 +4,7 @@ from django.db import transaction#保证数据库原子性
 from apps.datasets.models import Dataset, DataRow
 
 
-ALLOWED_EXTENSIONS = ('.csv', '.xlsx', '.xls')
+ALLOWED_EXTENSIONS = ('.csv', '.xlsx', '.xls', '.json', '.jsonl', '.parquet')
 
 # 数据集规模上限（匹配项目"中小数据集自助分析"定位）
 # 文件大小上限在 views.py 的 MAX_FILE_SIZE 单独定义
@@ -112,6 +112,23 @@ def _read_file(path: str, file_name: str) -> pd.DataFrame:
         return pd.read_csv(path, index_col=False)
     elif file_name.endswith(('.xlsx', '.xls')):
         return pd.read_excel(path)
+    elif file_name.endswith('.jsonl'):
+        # JSON Lines：每行一个独立 JSON 对象
+        return pd.read_json(path, lines=True)
+    elif file_name.endswith('.json'):
+        # 整文件一个 JSON 数组；对象数组天然转 DataFrame。
+        # 单对象/标量结构 pandas 会抛自己的 ValueError，转译成用户可读的提示
+        try:
+            df = pd.read_json(path)
+        except ValueError as e:
+            raise ValueError(
+                f'JSON 解析失败（需要对象数组结构，即 [{{...}}, ...]）: {e}'
+            ) from e
+        if df.empty:
+            raise ValueError('JSON 文件为空或不是对象数组结构（需要 [{...}, {...}] 形态）')
+        return df
+    elif file_name.endswith('.parquet'):
+        return pd.read_parquet(path)
     raise ValueError(f'不支持的文件格式: {file_name}')
 
 

@@ -6,8 +6,26 @@ from pgvector.django import VectorField, HnswIndex
 
 class QueryHistory(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # 文件数据集查询走 dataset；外部数据源查询 dataset 为空、走 source。
+    # 两条数据源路径共用一张历史表，前端查询历史一个列表展示。
     dataset = models.ForeignKey(
-        'datasets.Dataset', on_delete=models.CASCADE, related_name='queries'
+        'datasets.Dataset', on_delete=models.CASCADE,
+        related_name='queries', null=True, blank=True,
+    )
+    source = models.ForeignKey(
+        'datasources.ExternalDataSource', on_delete=models.SET_NULL,
+        related_name='queries', null=True, blank=True,
+        verbose_name='外部数据源（外部查询时记录）',
+    )
+    # 外部查询本次涉及的表清单（如 ["orders", "customers"]），重跑/审计用
+    source_tables = models.JSONField(
+        null=True, blank=True, verbose_name='外部查询涉及表',
+    )
+    # 联合查询参与的全部数据集（dataset FK 指向第一个/主数据集）。
+    # 单数据集查询此 M2M 为空；rerun/chart-suggest 复检时对 M2M 全量校验可见性。
+    datasets = models.ManyToManyField(
+        'datasets.Dataset', related_name='multi_queries', blank=True,
+        verbose_name='参与数据集（联合查询）',
     )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='queries'

@@ -20,6 +20,7 @@ import { createPinia } from 'pinia'
 // 自动按需更安全的根因——后者只解析模板顶层标签，漏掉 TabNavRenderer 导致崩溃）。
 import { ElAlert } from 'element-plus/es/components/alert/index'
 import { ElButton } from 'element-plus/es/components/button/index'
+import { ElCollapse } from 'element-plus/es/components/collapse/index'
 import { ElContainer } from 'element-plus/es/components/container/index'
 import { ElDialog } from 'element-plus/es/components/dialog/index'
 import { ElDropdown } from 'element-plus/es/components/dropdown/index'
@@ -27,6 +28,7 @@ import { ElEmpty } from 'element-plus/es/components/empty/index'
 import { ElForm } from 'element-plus/es/components/form/index'
 import { ElIcon } from 'element-plus/es/components/icon/index'
 import { ElInput } from 'element-plus/es/components/input/index'
+import { ElInputNumber } from 'element-plus/es/components/input-number/index'
 import { ElDescriptions } from 'element-plus/es/components/descriptions/index'
 import { ElMenu } from 'element-plus/es/components/menu/index'
 import { ElPagination } from 'element-plus/es/components/pagination/index'
@@ -45,6 +47,8 @@ import 'element-plus/es/components/alert/style/css'
 import 'element-plus/es/components/aside/style/css'
 import 'element-plus/es/components/button/style/css'
 import 'element-plus/es/components/button-group/style/css'
+import 'element-plus/es/components/collapse/style/css'
+import 'element-plus/es/components/collapse-item/style/css'
 import 'element-plus/es/components/container/style/css'
 import 'element-plus/es/components/dialog/style/css'
 import 'element-plus/es/components/dropdown/style/css'
@@ -56,15 +60,18 @@ import 'element-plus/es/components/form-item/style/css'
 import 'element-plus/es/components/header/style/css'
 import 'element-plus/es/components/icon/style/css'
 import 'element-plus/es/components/input/style/css'
+import 'element-plus/es/components/input-number/style/css'
 import 'element-plus/es/components/main/style/css'
 import 'element-plus/es/components/descriptions/style/css'
 import 'element-plus/es/components/descriptions-item/style/css'
 import 'element-plus/es/components/menu/style/css'
 import 'element-plus/es/components/menu-item/style/css'
 import 'element-plus/es/components/option/style/css'
+import 'element-plus/es/components/option-group/style/css'
 import 'element-plus/es/components/pagination/style/css'
 import 'element-plus/es/components/popconfirm/style/css'
 import 'element-plus/es/components/popover/style/css'
+import 'element-plus/es/components/radio/style/css'
 import 'element-plus/es/components/radio-button/style/css'
 import 'element-plus/es/components/radio-group/style/css'
 import 'element-plus/es/components/select/style/css'
@@ -110,6 +117,7 @@ app.use(router)
 const elementPlugins = [
   ElAlert,
   ElButton,        // 自动注册 ElButtonGroup
+  ElCollapse,      // 自动注册 ElCollapseItem
   ElContainer,     // 自动注册 ElAside/ElHeader/ElMain/ElFooter
   ElDialog,
   ElDropdown,      // 自动注册 ElDropdownItem/ElDropdownMenu
@@ -117,6 +125,7 @@ const elementPlugins = [
   ElForm,          // 自动注册 ElFormItem
   ElIcon,
   ElInput,
+  ElInputNumber,
   ElDescriptions,  // 自动注册 ElDescriptionsItem
   ElMenu,          // 自动注册 ElMenuItem/ElMenuItemGroup/ElSubMenu
   ElPagination,

@@ -41,6 +41,21 @@ const router = createRouter({
           component: () => import('../views/QueryHistory.vue'),
         },
         {
+          path: 'join-query',
+          name: 'join-query',
+          component: () => import('../views/JoinQuery.vue'),
+        },
+        {
+          path: 'datasources',
+          name: 'datasources',
+          component: () => import('../views/DataSourceList.vue'),
+        },
+        {
+          path: 'datasources/:id/query',
+          name: 'datasource-query',
+          component: () => import('../views/DataSourceQuery.vue'),
+        },
+        {
           path: 'shares',
           name: 'share-records',
           component: () => import('../views/ShareRecords.vue'),

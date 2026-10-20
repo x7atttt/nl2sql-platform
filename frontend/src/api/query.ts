@@ -5,6 +5,11 @@ export const queryApi = {
     return request.post(`/api/query/${datasetId}/`, { question })
   },
 
+  /** 多数据集联合查询（2-3 个数据集，LLM 自动推断 JOIN 条件） */
+  multiQuery(datasetIds: string[], question: string) {
+    return request.post('/api/query/multi/', { dataset_ids: datasetIds, question })
+  },
+
   getHistory(params: { page?: number; dataset_id?: string } = {}) {
     return request.get('/api/query/history/', { params })
   },

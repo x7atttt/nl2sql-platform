@@ -12,13 +12,23 @@
           @input="onSearchInput"
           @clear="fetchHistory"
         />
-        <el-select v-model="filterDatasetId" placeholder="按数据集筛选" clearable @change="fetchHistory">
-          <el-option
-            v-for="ds in datasetOptions"
-            :key="ds.id"
-            :label="ds.name"
-            :value="ds.id"
-          />
+        <el-select v-model="filterValue" placeholder="按来源筛选" clearable filterable @change="fetchHistory">
+          <el-option-group label="数据集">
+            <el-option
+              v-for="ds in datasetOptions"
+              :key="ds.id"
+              :label="ds.name"
+              :value="`ds:${ds.id}`"
+            />
+          </el-option-group>
+          <el-option-group v-if="sourceOptions.length > 0" label="数据源">
+            <el-option
+              v-for="src in sourceOptions"
+              :key="src.id"
+              :label="`${src.name}（${src.db_type === 'mysql' ? 'MySQL' : 'PostgreSQL'}）`"
+              :value="`src:${src.id}`"
+            />
+          </el-option-group>
         </el-select>
       </div>
     </div>
@@ -108,7 +118,22 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="dataset_name" label="数据集" min-width="110" show-overflow-tooltip />
+        <el-table-column label="来源" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">
+            <template v-if="row.dataset_name">
+              <el-icon class="source-icon"><FolderOpened /></el-icon>
+              {{ row.dataset_name }}
+            </template>
+            <template v-else-if="row.source_name">
+              <el-tag size="small" class="source-tag"
+                      :type="row.source_db_type === 'mysql' ? 'warning' : 'success'">
+                {{ row.source_db_type === 'mysql' ? 'MySQL' : 'PG' }}
+              </el-tag>
+              {{ row.source_name }}
+            </template>
+            <span v-else class="text-tertiary">-</span>
+          </template>
+        </el-table-column>
         <el-table-column v-if="isAdmin" prop="username" label="查询人" width="90" />
         <el-table-column prop="question" label="问题" min-width="160" show-overflow-tooltip />
         <el-table-column label="SQL" min-width="200">
@@ -152,16 +177,20 @@
         <el-table-column label="操作" width="110" fixed="right">
           <template #default="{ row }">
             <div class="action-btns">
-              <el-tooltip content="查看数据集" placement="top">
-                <el-button class="action-icon-btn" link type="primary" :icon="View" @click="goDetail(row.dataset)" />
+              <el-tooltip :content="row.dataset ? '查看数据集' : '查看数据源'" placement="top">
+                <el-button v-if="row.dataset" class="action-icon-btn" link type="primary" :icon="View" @click="goDetail(row.dataset)" />
+                <el-button v-else-if="row.source" class="action-icon-btn" link type="primary" :icon="Coin" @click="goSourceQuery(row.source)" />
               </el-tooltip>
-              <el-tooltip content="导出数据" placement="top">
+              <el-tooltip
+                :content="row.dataset ? '导出数据' : '外部数据源导出开发中'"
+                placement="top"
+              >
                 <el-button
                   class="action-icon-btn"
                   link
                   type="success"
                   :icon="Download"
-                  :disabled="!row.is_success"
+                  :disabled="!row.is_success || !row.dataset"
                   @click="openExportDialog(row)"
                 />
               </el-tooltip>
@@ -199,10 +228,11 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Refresh, View, DocumentCopy, Download, Search } from '@element-plus/icons-vue'
+import { Refresh, View, DocumentCopy, Download, Search, Coin, FolderOpened } from '@element-plus/icons-vue'
 import { ElMessage, ElLoading } from 'element-plus'
 import { queryApi } from '../api/query'
 import { datasetApi } from '../api/dataset'
+import { datasourceApi } from '../api/datasource'
 import { exportApi, downloadBlob } from '../api/export'
 import { useUserStore } from '../stores/user'
 
@@ -213,8 +243,10 @@ const loading = ref(false)
 const records = ref<any[]>([])
 const total = ref(0)
 const page = ref(1)
-const filterDatasetId = ref('')
+// 来源筛选值：'ds:{id}'（数据集）或 'src:{id}'（外部数据源）
+const filterValue = ref('')
 const datasetOptions = ref<any[]>([])
+const sourceOptions = ref<any[]>([])
 
 // 搜索（防抖，避免每输一个字就请求）
 const searchKeyword = ref('')
@@ -266,7 +298,8 @@ async function confirmExport() {
   try {
     const res = await exportApi.exportFile(exportRow.value.id, exportFormat.value)
     const ext = exportFormat.value === 'csv' ? '.csv' : '.xlsx'
-    const filename = `${exportRow.value.dataset_name || 'query'}_result${ext}`
+    const filename = `${exportRow.value.dataset_name
+      || exportRow.value.source_name || 'query'}_result${ext}`
     downloadBlob(res.data as Blob, filename)
     ElMessage.success('导出成功')
     exportDialogVisible.value = false
@@ -282,13 +315,24 @@ onMounted(async () => {
   fetchHistory()
   const res = await datasetApi.getList()
   datasetOptions.value = res.data.results
+  // 数据源选项（viewer 无权限访问数据源接口，静默跳过不显示该分组）
+  try {
+    const srcRes = await datasourceApi.getList()
+    sourceOptions.value = srcRes.data
+  } catch {
+    sourceOptions.value = []
+  }
 })
 
 async function fetchHistory() {
   loading.value = true
   try {
     const params: any = { page: page.value }
-    if (filterDatasetId.value) params.dataset_id = filterDatasetId.value
+    if (filterValue.value) {
+      const [kind, id] = filterValue.value.split(':')
+      if (kind === 'ds') params.dataset_id = id
+      else if (kind === 'src') params.source_id = id
+    }
     if (searchKeyword.value) params.search = searchKeyword.value
     const res = await queryApi.getHistory(params)
     records.value = res.data.results
@@ -305,6 +349,10 @@ function onPageChange(p: number) {
 
 function goDetail(datasetId: string) {
   router.push({ name: 'dataset-detail', params: { id: datasetId } })
+}
+
+function goSourceQuery(sourceId: string) {
+  router.push(`/datasources/${sourceId}/query`)
 }
 
 /**
@@ -343,6 +391,16 @@ function formatTime(t: string) {
 
 <style scoped>
 /* 筛选栏：搜索框 + 数据集下拉并排 */
+/* 来源列：数据集图标 / 外部数据源类型 tag */
+.source-icon {
+  vertical-align: -2px;
+  margin-right: 4px;
+  color: var(--el-text-color-secondary);
+}
+.source-tag {
+  margin-right: 4px;
+}
+
 .filter-bar {
   display: flex;
   gap: 12px;

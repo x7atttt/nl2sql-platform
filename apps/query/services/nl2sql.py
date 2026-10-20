@@ -40,6 +40,93 @@ def _sanitize_for_json(obj):
 # SQL 中是否已有 LIMIT 子句的判断（用正则词边界，避免误判 'PRELIMITED' 等子串）
 _HAS_LIMIT_RE = re.compile(r'\blimit\b\s+\d+', re.IGNORECASE)
 
+# SQL 里 uuid 字面量（带引号），用于 dataset_id 白名单校验
+_UUID_RE = re.compile(
+    r"'([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})'"
+)
+
+# 危险关键字（只读校验：文件数据集路径与外部数据源路径共用）
+DANGEROUS_KEYWORDS = [
+    'DROP', 'DELETE', 'UPDATE', 'INSERT', 'ALTER',
+    'CREATE', 'TRUNCATE', 'EXEC', 'EXECUTE',
+    'GRANT', 'REVOKE',
+]
+
+
+def strip_sql_comments(sql: str) -> str:
+    """剥离 SQL 注释后再做关键字校验，避免注释里的词被误判。
+
+    支持两种 PostgreSQL/MySQL 注释：
+    - 块注释  /* ... */（可跨行）
+    - 行注释  -- ... 到行尾
+    """
+    sql = re.sub(r'/\*.*?\*/', ' ', sql, flags=re.DOTALL)
+    sql = re.sub(r'--[^\n]*', ' ', sql)
+    return sql
+
+
+def validate_select_sql(sql: str, allowed_dataset_ids: set | None = None) -> bool:
+    """只读 SQL 校验（四层基础 + 可选 dataset_id 白名单层）。
+
+    文件数据集路径与外部数据源路径共用；外部路径不传 allowed_dataset_ids
+    （外部 engine 只连目标库，平台自身表从连接层就不可达）。
+
+    1. 白名单：必须以 SELECT 开头
+    2. 危险关键字：词边界匹配（防 'CREATED_AT' 误判 'CREATE'）
+    3. 分号注入：SQL 中间不能有分号
+    4. dataset_id 白名单（可选）：uuid 字面量必须在授权集合内
+    """
+    sql_clean = strip_sql_comments(sql).strip()
+    sql_upper = sql_clean.upper()
+
+    if not sql_upper.startswith('SELECT'):
+        return False
+
+    for keyword in DANGEROUS_KEYWORDS:
+        if re.search(rf'\b{keyword}\b', sql_upper):
+            return False
+
+    if ';' in sql_clean.rstrip(';').rstrip():
+        return False
+
+    if allowed_dataset_ids is not None:
+        sql_uuids = {m.lower() for m in _UUID_RE.findall(sql_clean)}
+        if sql_uuids - allowed_dataset_ids:
+            return False
+
+    return True
+
+
+def check_duplicate_columns(columns: list) -> None:
+    """重复结果列名检测（JOIN 查询忘写 AS 别名时防 dict 静默丢列）。
+
+    抛 ValueError，调用方让它进入失败重试循环，错误信息喂 LLM 自动补别名。
+    """
+    dup = {c for c in columns if columns.count(c) > 1}
+    if dup:
+        raise ValueError(
+            f"结果列名重复: {', '.join(sorted(dup))}。"
+            f'请为每个 SELECT 列添加不同的 AS 别名（如 SUM(amount) AS total_amount）'
+        )
+
+
+def add_limit_clause(sql: str, limit: int = 1000) -> str:
+    """无 LIMIT 时追加保护上限（词边界判断，防列名含 limit 子串误判）。"""
+    if not _HAS_LIMIT_RE.search(sql):
+        sql = sql.rstrip(';') + f' LIMIT {limit}'
+    return sql
+
+
+def clean_sql(sql: str) -> str:
+    """剥离 LLM 响应里的 markdown 代码围栏。"""
+    sql = sql.strip()
+    if sql.startswith('```'):
+        sql = sql.split('\n', 1)[1] if '\n' in sql else sql[3:]
+    if sql.endswith('```'):
+        sql = sql.rsplit('```', 1)[0]
+    return sql.strip()
+
 
 def execute_select_sql(sql: str, infer_types: bool = False):
     """执行 SELECT SQL 并返回净化后的结果行。
@@ -59,6 +146,11 @@ def execute_select_sql(sql: str, infer_types: bool = False):
         cursor.execute(sql)
         columns = [c[0] for c in cursor.description]
         rows = cursor.fetchall()
+
+    # 重复列名检测：联合查询若 LLM 忘写 AS 别名，两数据集同名列（如 amount）
+    # 会让下游 dict(zip(columns, row)) 静默丢列。显式抛错进入失败重试循环，
+    # 错误信息会反馈给 LLM 让它补别名修复。
+    check_duplicate_columns(columns)
 
     if infer_types:
         column_types = _infer_py_types(columns, rows)
@@ -127,6 +219,42 @@ $schema_summary
 1. ORDER BY 排序时必须加 NULLS LAST（PostgreSQL 默认 DESC 时 NULL 排最前）
 """)
 
+# ===== 多数据集联合查询 prompt =====
+
+SQL_GENERATE_MULTI_SYSTEM = Template("""你是一个专业的SQL生成助手。根据以下信息生成PostgreSQL SQL查询。
+
+多个数据集存储在同一张 dataset_rows 表中（每行数据在 data 字段 JSONB 里），
+用"别名 + dataset_id 过滤"区分各数据集的行，跨数据集问题用 JOIN 关联。
+
+$schema_summary
+
+各数据集业务说明:
+$business_description
+
+相似查询案例:
+$few_shot_cases
+
+规则:
+1. 只生成 SELECT 语句
+2. 列引用必须带别名前缀，如 t1.data->>'列名'；数值计算用 (t1.data->>'列名')::numeric
+3. 每个用到的别名都必须带 dataset_id 过滤条件，如 WHERE t1.dataset_id = '...' AND t2.dataset_id = '...'
+4. JOIN 条件优先使用上方"疑似关联列"提示；没有提示时根据列语义和 top 值自行判断
+5. 所有 SELECT 列必须加 AS 别名，用简洁英文（不同数据集可能有同名列，不加别名会报"列名重复"错误）
+6. 优先"各自 GROUP BY 聚合后再 JOIN"，避免两个大数据集直接 JOIN 导致行数爆炸
+7. 不要使用 LIMIT 以外的结果限制方式
+8. ORDER BY 排序时必须加 NULLS LAST
+""")
+
+SQL_FIX_MULTI_SYSTEM = Template("""你是一个SQL修复专家。之前生成的多数据集联合SQL执行失败了，请根据错误信息修复SQL。
+
+$schema_summary
+
+规则:
+1. 列引用必须带别名前缀（如 t1.data->>'列名'），所有 SELECT 列必须有 AS 别名
+2. 每个用到的别名都必须带 dataset_id 过滤条件
+3. ORDER BY 排序时必须加 NULLS LAST
+""")
+
 SQL_FIX_USER = Template("问题: $question\n\n失败的SQL: $failed_sql\n\n错误信息: $error_msg\n\n请生成修复后的SQL（只输出SQL语句）:")
 
 
@@ -139,18 +267,22 @@ class NL2SQLService:
     1. Prompt 模板化 — string.Template，方便迭代调优
     2. Few-shot 案例库 — 从 QueryHistory 注入成功查询案例
     3. Analyzer 驱动的 Schema 发现 — 统计摘要 + 样本 + 字段值，替代简陋的手动探测
+
+    支持单数据集（传 Dataset）和多数据集联合查询（传 list[Dataset]）：
+    多数据集走同表自连接（dataset_rows 不同别名 + dataset_id 过滤），
+    JOIN 条件由 LLM 根据"疑似关联列"提示和 top 值分布自动推断。
     """
 
     MAX_RETRIES = 3
 
-    DANGEROUS_KEYWORDS = [
-        'DROP', 'DELETE', 'UPDATE', 'INSERT', 'ALTER',
-        'CREATE', 'TRUNCATE', 'EXEC', 'EXECUTE',
-        'GRANT', 'REVOKE',
-    ]
-
     def __init__(self, dataset):
-        self.dataset = dataset
+        # 兼容单 Dataset 和 list[Dataset]；多数据集时第一个是主数据集
+        self.datasets = list(dataset) if isinstance(dataset, (list, tuple)) else [dataset]
+        self.dataset = self.datasets[0]
+        self.is_multi = len(self.datasets) > 1
+        # dataset_id 白名单：SQL 中出现的 uuid 字面量必须都在这里
+        # （防 LLM 幻觉引用未授权数据集，单表/多表统一校验）
+        self._allowed_dataset_ids = {str(ds.id).lower() for ds in self.datasets}
         self.llm = ChatOpenAI(
             model=settings.LLM_MODEL,
             temperature=0,
@@ -162,13 +294,27 @@ class NL2SQLService:
     # ===== Schema 发现 =====
 
     def _discover_schema(self) -> dict:
-        from apps.datasets.services.analyzer import get_schema_summary
+        from apps.datasets.services.analyzer import (
+            get_schema_summary, get_multi_schema_summary,
+        )
         # business_description 独立注入（不拼进 schema_summary）：
         # 1) 让 LLM 区分"数据分布"和"业务语义" 2) 改业务文档不影响 schema 缓存命中
+        if self.is_multi:
+            # 多数据集：业务说明按别名分列，让 LLM 知道哪段说明对应哪个别名
+            from apps.datasets.services.analyzer import _MULTI_ALIASES
+            desc_lines = []
+            for alias, ds in zip(_MULTI_ALIASES, self.datasets):
+                d = ds.business_description.strip() or '无'
+                desc_lines.append(f'{alias} "{ds.name}": {d}')
+            business_description = '\n'.join(desc_lines)
+            schema_summary = get_multi_schema_summary(self.datasets)
+        else:
+            business_description = self.dataset.business_description.strip() or '无'
+            schema_summary = get_schema_summary(self.dataset)
         return {
-            'schema_summary': get_schema_summary(self.dataset),
+            'schema_summary': schema_summary,
             'few_shot_cases': self._get_few_shot_cases(),
-            'business_description': self.dataset.business_description.strip() or '无',
+            'business_description': business_description,
         }
 
     def _get_few_shot_cases(self) -> str:
@@ -185,10 +331,11 @@ class NL2SQLService:
 
         if question_vec is not None:
             # 语义检索：annotate 计算余弦距离，按距离升序取最近 3 条
+            # 多数据集联合查询取"任一参与数据集"的历史（语义相关的自然浮出）
             cases = list(
                 QueryHistory.objects
                 .filter(
-                    dataset=self.dataset,
+                    dataset__in=self.datasets,
                     is_success=True,
                     question_embedding__isnull=False,
                 )
@@ -203,7 +350,7 @@ class NL2SQLService:
 
         # 降级：embedding 失败 或 无向量化历史 → 时间倒序取 3 条
         cases = QueryHistory.objects.filter(
-            dataset=self.dataset, is_success=True
+            dataset__in=self.datasets, is_success=True
         ).order_by('-created_at')[:3]
         if not cases:
             return '无'
@@ -211,62 +358,21 @@ class NL2SQLService:
             f"问题: {c.question}\nSQL: {c.generated_sql}" for c in cases
         )
 
-    # ===== SQL 安全 =====
+    # ===== SQL 安全（委托模块级公共函数，外部数据源路径复用同一套校验）=====
 
     @staticmethod
     def _strip_sql_comments(sql: str) -> str:
-        """剥离 SQL 注释后再做关键字校验，避免注释里的词被误判。
-
-        支持两种 PostgreSQL 注释：
-        - 块注释  /* ... */（可跨行，可嵌套，但这里按非嵌套处理足够）
-        - 行注释  -- ... 到行尾
-        字符串字面量 '...' 内的注释标记不剥离（LLM 生成的 SQL 几乎不会在
-        WHERE 条件里塞注释语法，按 YAGNI 不处理字符串内的边界情况）。
-        """
-        # 先剥离块注释 /* ... */（DOTALL 让 . 匹配换行）
-        sql = re.sub(r'/\*.*?\*/', ' ', sql, flags=re.DOTALL)
-        # 再剥离行注释 -- ... 到行尾
-        sql = re.sub(r'--[^\n]*', ' ', sql)
-        return sql
+        return strip_sql_comments(sql)
 
     def _validate_sql(self, sql: str) -> bool:
-        """三层 SQL 安全校验：白名单 → 危险关键字 → 分号注入。
-
-        所有校验都在剥离注释后的 SQL 上做，避免注释里的词干扰判断。
-        """
-        # 剥离注释，避免 /* DROP TABLE */ 里的 DROP 被误拦
-        sql_clean = self._strip_sql_comments(sql).strip()
-        sql_upper = sql_clean.upper()
-
-        # 1. 白名单：必须以 SELECT 开头
-        if not sql_upper.startswith('SELECT'):
-            return False
-
-        # 2. 危险关键字：词边界匹配（防 'CREATED_AT' 误判 'CREATE'）
-        for keyword in self.DANGEROUS_KEYWORDS:
-            if re.search(rf'\b{keyword}\b', sql_upper):
-                return False
-
-        # 3. 分号注入：SQL 中间不能有分号（末尾分号允许，是合法结尾符）
-        # 去掉末尾的单个分号后再查，剩余若含分号说明是多语句注入
-        # （如 'SELECT 1; DROP TABLE x'）
-        if ';' in sql_clean.rstrip(';').rstrip():
-            return False
-
-        return True
+        """只读 SQL 校验 + dataset_id 白名单（见模块级 validate_select_sql）。"""
+        return validate_select_sql(sql, self._allowed_dataset_ids)
 
     def _add_limit(self, sql: str) -> str:
-        if 'LIMIT' not in sql.upper():
-            sql = sql.rstrip(';') + ' LIMIT 1000'
-        return sql
+        return add_limit_clause(sql, 1000)
 
     def _clean_sql(self, sql: str) -> str:
-        sql = sql.strip()
-        if sql.startswith('```'):
-            sql = sql.split('\n', 1)[1] if '\n' in sql else sql[3:]
-        if sql.endswith('```'):
-            sql = sql.rsplit('```', 1)[0]
-        return sql.strip()
+        return clean_sql(sql)
 
     # ===== SQL 生成 =====
 
@@ -276,8 +382,11 @@ class NL2SQLService:
         return text.replace('{', '{{').replace('}', '}}')
 
     def _generate_sql(self, question: str, schema_info: dict) -> str:
+        generate_template = (
+            SQL_GENERATE_MULTI_SYSTEM if self.is_multi else SQL_GENERATE_SYSTEM
+        )
         prompt = ChatPromptTemplate.from_messages([
-            ('system', self._escape_braces(SQL_GENERATE_SYSTEM.safe_substitute(
+            ('system', self._escape_braces(generate_template.safe_substitute(
                 schema_summary=schema_info['schema_summary'],
                 few_shot_cases=schema_info['few_shot_cases'],
                 dataset_id=str(self.dataset.id),
@@ -293,8 +402,9 @@ class NL2SQLService:
 
     def _regenerate_sql(self, question: str, failed_sql: str,
                         error_msg: str, schema_info: dict) -> str:
+        fix_template = SQL_FIX_MULTI_SYSTEM if self.is_multi else SQL_FIX_SYSTEM
         prompt = ChatPromptTemplate.from_messages([
-            ('system', self._escape_braces(SQL_FIX_SYSTEM.safe_substitute(
+            ('system', self._escape_braces(fix_template.safe_substitute(
                 schema_summary=schema_info['schema_summary'],
             ))),
             ('human', self._escape_braces(SQL_FIX_USER.safe_substitute(

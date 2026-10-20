@@ -7,4 +7,5 @@ urlpatterns = [
     path('api/datasets/', include('apps.datasets.api.urls')),
     path('api/query/', include('apps.query.api.urls')),
     path('api/export/', include('apps.export.api.urls')),
+    path('api/datasources/', include('apps.datasources.api.urls')),
 ]
