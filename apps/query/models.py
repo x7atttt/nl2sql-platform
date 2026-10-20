@@ -132,6 +132,10 @@ class Conversation(models.Model):
         related_name='conversations', null=True, blank=True,
     )
     title = models.CharField(max_length=200, blank=True, default='', verbose_name='会话标题')
+    # 绑定的技能名（skills/ 目录 SKILL.md 的 name；技能是文件不是 DB 记录，
+    # 删除技能文件后旧会话仅提示技能失效，不阻塞对话）
+    skill = models.CharField(max_length=100, blank=True, default='',
+                             verbose_name='绑定技能')
     visibility = models.CharField(
         max_length=20,
         choices=[('private', '私有'), ('published', '已发布')],

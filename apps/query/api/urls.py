@@ -4,6 +4,7 @@ from . import chat_views
 
 urlpatterns = [
     # 对话（SSE 流式问答）
+    path('chat/skills/', chat_views.ChatSkillView.as_view(), name='chat-skills'),
     path('chat/conversations/', chat_views.ChatConversationView.as_view(), name='chat-conversations'),
     path('chat/conversations/<uuid:conv_id>/', chat_views.ChatConversationDetailView.as_view(), name='chat-conversation-detail'),
     path('chat/conversations/<uuid:conv_id>/messages/', chat_views.ChatMessageStreamView.as_view(), name='chat-messages'),

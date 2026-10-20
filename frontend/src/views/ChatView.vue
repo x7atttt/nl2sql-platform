@@ -38,6 +38,9 @@
         <header class="chat-header">
           <div class="chat-header-title">{{ activeConv.title || '新对话' }}</div>
           <div class="chat-header-meta">
+            <el-tag v-if="activeConv.skill" size="small" type="danger" effect="dark">
+              技能 · {{ activeConv.skill }}
+            </el-tag>
             <el-tag size="small" effect="plain">
               {{ activeConv.chat_mode === 'chat_file'
                 ? `文件数据集 · ${activeConv.dataset_name}`
@@ -185,6 +188,21 @@
             <el-radio-button value="chat_db">外部数据源</el-radio-button>
           </el-radio-group>
         </el-form-item>
+        <el-form-item label="技能" v-if="skillOptions.length">
+          <el-select v-model="dialogSkill" placeholder="不使用技能" clearable style="width: 100%">
+            <el-option
+              v-for="sk in skillOptions"
+              :key="sk.name"
+              :label="sk.name"
+              :value="sk.name"
+            >
+              <span style="float: left">{{ sk.name }}</span>
+              <span style="float: right; color: var(--el-text-color-secondary); font-size: 12px">
+                {{ sk.description.slice(0, 16) }}…
+              </span>
+            </el-option>
+          </el-select>
+        </el-form-item>
         <el-form-item :label="dialogMode === 'chat_file' ? '数据集' : '数据源'">
           <el-select
             v-model="dialogResource"
@@ -268,6 +286,8 @@ const dialogVisible = ref(false)
 const dialogMode = ref<'chat_file' | 'chat_db'>('chat_file')
 const dialogResource = ref('')
 const dialogLoading = ref(false)
+const dialogSkill = ref('')
+const skillOptions = ref<{ name: string; description: string }[]>([])
 const datasetOptions = ref<{ id: string; name: string; status: string }[]>([])
 const sourceOptions = ref<{ id: string; name: string; db_type: string }[]>([])
 
@@ -345,6 +365,12 @@ function openCreateDialog() {
 
 async function loadDialogOptions() {
   dialogLoading.value = true
+  if (!skillOptions.value.length) {
+    try {
+      const res = await chatApi.listSkills()
+      skillOptions.value = res.data.results
+    } catch { /* 技能列表失败不阻塞建会话 */ }
+  }
   try {
     if (dialogMode.value === 'chat_file') {
       const res = await datasetApi.getList({ page: 1 })
@@ -360,8 +386,10 @@ async function loadDialogOptions() {
 
 async function createConversation() {
   const payload = dialogMode.value === 'chat_file'
-    ? { chat_mode: 'chat_file', dataset_id: dialogResource.value }
-    : { chat_mode: 'chat_db', source_id: dialogResource.value }
+    ? { chat_mode: 'chat_file', dataset_id: dialogResource.value,
+        skill: dialogSkill.value || undefined }
+    : { chat_mode: 'chat_db', source_id: dialogResource.value,
+        skill: dialogSkill.value || undefined }
   const res = await chatApi.createConversation(payload)
   dialogVisible.value = false
   await loadConversations()

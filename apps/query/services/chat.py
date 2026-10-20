@@ -61,6 +61,7 @@ $chat_history
 
 相似查询案例（历史成功问答，参考其问法与 SQL 写法）:
 $few_shot_cases
+$skill_instructions
 
 输出要求:
 1. 只输出一个 JSON 对象，不要 markdown 围栏、不要多余解释，格式:
@@ -80,6 +81,7 @@ $schema_summary
 
 对话上下文:
 $chat_history
+$skill_instructions
 
 输出要求与前次相同: 只输出一个 JSON 对象
 {"thoughts": "...", "sql": "...", "chart_type": "..."}，不要围栏和解释。
@@ -231,6 +233,18 @@ class ChatService:
     def _format_cases(cases) -> str:
         return '\n\n'.join(f'问题: {c.question}\nSQL: {c.generated_sql}' for c in cases)
 
+    def _skill_instructions(self) -> str:
+        """会话绑定技能的指令注入（技能文件被删则空串，不阻塞对话）。"""
+        if not self.conversation.skill:
+            return ''
+        from apps.query.services.skills import get_skill
+        skill = get_skill(self.conversation.skill)
+        if skill is None:
+            logger.warning('会话绑定的技能已不存在: %s', self.conversation.skill)
+            return ''
+        return (f'\n当前技能「{skill.name}」——{skill.description}\n'
+                f'技能指令（优先级高于上方通用规则，回答时必须遵循）:\n{skill.instructions}\n')
+
     def _build_messages(self, question: str, fix: dict | None = None) -> list:
         ctx = dict(
             schema_summary=self._schema_summary(),
@@ -238,6 +252,7 @@ class ChatService:
             chat_history=self._chat_history(),
             few_shot_cases=self._few_shot_cases(question),
             sql_rules=self._sql_rules(),
+            skill_instructions=self._skill_instructions(),
         )
         if fix is None:
             system = CHAT_SYSTEM.substitute(**ctx)
@@ -261,7 +276,8 @@ class ChatService:
         chunks = []
         usage = None
         with span(self._trace_id, 'llm', '生成SQL(流式)',
-                  model=settings.LLM_MODEL, attempt=0) as s:
+                  model=settings.LLM_MODEL, attempt=0,
+                  skill=self.conversation.skill or None) as s:
             prompt = self._build_messages(question)
             s.attrs['prompt_chars'] = sum(len(m.content) for m in prompt.to_messages())
             for chunk in self.llm.stream(prompt):

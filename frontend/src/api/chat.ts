@@ -37,6 +37,7 @@ export interface ConversationItem {
   source_name: string | null
   source_db_type: string | null
   title: string
+  skill: string
   created_at: string
   updated_at: string
 }
@@ -60,11 +61,21 @@ export interface ChatMessageItem {
 }
 
 export const chatApi = {
+  listSkills() {
+    return request.get<{ results: { name: string; description: string }[] }>(
+      '/api/query/chat/skills/')
+  },
+
   listConversations() {
     return request.get<{ results: ConversationItem[] }>('/api/query/chat/conversations/')
   },
 
-  createConversation(payload: { chat_mode: string; dataset_id?: string; source_id?: string }) {
+  createConversation(payload: {
+    chat_mode: string
+    dataset_id?: string
+    source_id?: string
+    skill?: string
+  }) {
     return request.post<ConversationItem>('/api/query/chat/conversations/', payload)
   },
 

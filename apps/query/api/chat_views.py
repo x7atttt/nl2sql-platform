@@ -38,6 +38,7 @@ def _serialize_conversation(conv: Conversation) -> dict:
         'source_name': conv.source.name if conv.source else None,
         'source_db_type': conv.source.db_type if conv.source else None,
         'title': conv.title,
+        'skill': conv.skill,
         'created_at': conv.created_at.isoformat(),
         'updated_at': conv.updated_at.isoformat(),
     }
@@ -63,6 +64,17 @@ def _get_own_conversation(request, conv_id) -> Conversation | None:
         return None
 
 
+class ChatSkillView(APIView):
+    """技能清单（skills/ 目录扫描注册，插拔即生效）。"""
+
+    def get(self, request):
+        from apps.query.services.skills import list_skills
+        return Response({'results': [
+            {'name': s.name, 'description': s.description}
+            for s in list_skills()
+        ]})
+
+
 class ChatConversationView(APIView):
     """会话列表 / 新建会话（chat_file 绑定数据集、chat_db 绑定外部源）。"""
 
@@ -80,6 +92,14 @@ class ChatConversationView(APIView):
             return Response({'error': 'chat_mode 必须是 chat_file 或 chat_db'},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        # 技能可选：必须在注册表内（防注入任意 prompt 文本）
+        skill = (request.data.get('skill') or '').strip()
+        if skill:
+            from apps.query.services.skills import get_skill
+            if get_skill(skill) is None:
+                return Response({'error': f'技能不存在: {skill}'},
+                                status=status.HTTP_400_BAD_REQUEST)
+
         if chat_mode == 'chat_file':
             dataset = _first_by_uuid(Dataset, request.data.get('dataset_id'))
             if dataset is None:
@@ -89,7 +109,7 @@ class ChatConversationView(APIView):
                 return Response({'error': '数据集尚未处理完成'},
                                 status=status.HTTP_400_BAD_REQUEST)
             conv = Conversation.objects.create(
-                user=request.user, chat_mode=chat_mode, dataset=dataset)
+                user=request.user, chat_mode=chat_mode, dataset=dataset, skill=skill)
         else:
             source = _first_by_uuid(ExternalDataSource,
                                     request.data.get('source_id'))
@@ -97,7 +117,7 @@ class ChatConversationView(APIView):
                 return Response({'error': '数据源不存在'},
                                 status=status.HTTP_404_NOT_FOUND)
             conv = Conversation.objects.create(
-                user=request.user, chat_mode=chat_mode, source=source)
+                user=request.user, chat_mode=chat_mode, source=source, skill=skill)
 
         return Response(_serialize_conversation(conv), status=status.HTTP_201_CREATED)
 
