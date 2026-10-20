@@ -63,3 +63,74 @@ class QueryHistory(models.Model):
                 opclasses=['vector_cosine_ops'],
             ),
         ]
+
+
+class Conversation(models.Model):
+    """对话会话：产品主交互单元（chat_file 绑定文件数据集 / chat_db 绑定外部数据源）。
+
+    visibility 字段是两态权限模型（private/published）的先行落位——
+    门禁暂不启用（登录即可对话），字段先到位避免日后加门禁时再迁移。
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='conversations', verbose_name='所属用户',
+    )
+    chat_mode = models.CharField(
+        max_length=20,
+        choices=[('chat_file', '文件数据集对话'), ('chat_db', '外部数据源对话')],
+        verbose_name='对话场景',
+    )
+    dataset = models.ForeignKey(
+        'datasets.Dataset', on_delete=models.CASCADE,
+        related_name='conversations', null=True, blank=True,
+    )
+    source = models.ForeignKey(
+        'datasources.ExternalDataSource', on_delete=models.CASCADE,
+        related_name='conversations', null=True, blank=True,
+    )
+    title = models.CharField(max_length=200, blank=True, default='', verbose_name='会话标题')
+    visibility = models.CharField(
+        max_length=20,
+        choices=[('private', '私有'), ('published', '已发布')],
+        default='private', verbose_name='可见性',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'chat_conversations'
+        verbose_name = '对话会话'
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(fields=['user', 'updated_at'], name='idx_conv_user_updated'),
+        ]
+
+
+class ChatMessage(models.Model):
+    """对话消息。user 存问题原文；assistant 的 content 存 thoughts，
+    extra 存结构化载荷（sql/chart_type/结果行）——图表数据存这里但不回传 LLM
+    （回传只有 token 成本没有收益，DB-GPT 同款经验）。
+    """
+    id = models.BigAutoField(primary_key=True)
+    conversation = models.ForeignKey(
+        Conversation, on_delete=models.CASCADE, related_name='messages',
+    )
+    round_index = models.IntegerField(verbose_name='轮次')
+    role = models.CharField(
+        max_length=10, choices=[('user', '用户'), ('assistant', '助手')],
+    )
+    content = models.TextField(verbose_name='内容')
+    extra = models.JSONField(null=True, blank=True, verbose_name='结构化载荷')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'chat_messages'
+        verbose_name = '对话消息'
+        verbose_name_plural = verbose_name
+        indexes = [
+            models.Index(
+                fields=['conversation', 'round_index'],
+                name='idx_chatmsg_conv_round',
+            ),
+        ]
